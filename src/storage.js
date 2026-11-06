@@ -1,6 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { AweError } from './errors.js';
 
 export class RunStore {
   constructor(root, runId) {
@@ -37,6 +38,11 @@ export class RunStore {
 }
 
 export async function readRun(root, runId) {
-  if (!/^[\w-]+$/.test(runId)) throw new Error('Invalid run ID');
-  return JSON.parse(await readFile(path.join(root, '.awe', 'runs', runId, 'state.json'), 'utf8'));
+  if (!/^[\w-]+$/.test(runId)) throw new AweError('INVALID_RUN_ID', 'Invalid run ID');
+  try {
+    return JSON.parse(await readFile(path.join(root, '.awe', 'runs', runId, 'state.json'), 'utf8'));
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new AweError('RUN_NOT_FOUND', `Run ${runId} not found under ${root}. Use --workflow PATH to select its workflow directory.`);
+    throw error;
+  }
 }
