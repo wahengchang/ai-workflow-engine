@@ -3,6 +3,8 @@
 Status: **PROPOSED / NOT IMPLEMENTED**  
 Baseline: `main` v0.1; see [Persona Review](persona-review-2026-11-06.md).
 
+Implementation progress: `awe simulate` and explicit execution-mode labels now exist. Successful simulations keep `status: COMPLETED` and record `executionMode: SIMULATED`; command runs record `COMMAND`. Legacy `run` selection and exit codes remain compatible. Other proposals below retain their stated future status.
+
 ## 1. Problem and non-goals
 
 AWE is a **filesystem-first prompt workflow interpreter**, not a content-quality judge or a distributed job orchestrator. The default experience must be small: an `ENTRY.md` and numbered Markdown steps should suffice for a linear process. A power user can opt in to nested parallel groups, IF, LOOP, deterministic tool steps, and reuse.
@@ -37,7 +39,7 @@ awe status <run-id>
 awe outputs <run-id>
 ```
 
-`init`, `doctor`, `simulate`, `outputs`, and `--executor codex` are **proposed v0.2+ commands, not currently available**. `run` and `plan` already exist in v0.1 with different options. `doctor` checks executable availability, auth readiness where detectable, output folder write access and dangerous commands; it does not authenticate automatically.
+`init`, `doctor`, `outputs`, and `--executor codex` are **proposed v0.2+ commands, not currently available**. `simulate`, `run`, and `plan` exist; see the README for current options. `doctor` checks executable availability, auth readiness where detectable, output folder write access and dangerous commands; it does not authenticate automatically.
 
 ### B. Advanced workflow author (target UX)
 
@@ -146,6 +148,8 @@ Step: `PENDING → RUNNING → COMPLETED | FAILED | SKIPPED`; a retry is a disti
 The v0.1 runtime currently supports only a subset; state schema changes require migration tests.
 
 ## 6. Explicit simulation
+
+Implemented slice: `awe simulate` always uses echo, rejects executor overrides, and labels CLI/state as `SIMULATED`. Echo `run` is labeled too. `status` remains an execution lifecycle field; `executionMode` is separate. Requiring real executor selection for `run` remains a future compatibility decision. Echo output still drives control flow literally, so simulation is not a model-quality or all-routes test.
 
 **Problem in v0.1:** `echo` can finish with `COMPLETED` even though no AI executed.
 

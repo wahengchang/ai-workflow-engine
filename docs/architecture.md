@@ -9,6 +9,7 @@
 - **Input** = immutable `input.key` variables provided by `awe.json` or `--var`.
 - **Step output** = content emitted by a command executor, stored as a separate artifact.
 - **Run** = immutable run identifier with state + event trace under `.awe/runs/<run-id>`.
+- **Execution mode** = additive run-state `executionMode: SIMULATED | COMMAND`, derived from the effective executor. Success/failure remains in `status`; command execution does not prove that an AI model was used.
 
 ## Execution boundary
 
@@ -17,6 +18,7 @@
 - A sequence walks children in numeric order. A parallel group forks a snapshot of its upstream context, waits for all branches, then publishes only entries changed from that snapshot (join barrier). Writes from distinct branches must have distinct IDs; replacing an earlier loop iteration's result is allowed.
 - IF reads a rendered `test` expression and chooses one of two named subdirectories. LOOP runs its children up to `maxIterations`, then compares the rendered `until` expression with `equals`.
 - Control routing is deterministic. Unsupported expressions fail rather than evaluate arbitrary code.
+- `awe simulate` forces echo regardless of configured executor and rejects executor CLI overrides. It uses the regular runtime and control conditions; it does not invent model output or bypass failed gates. Legacy `awe run` executor selection and exit codes remain supported, with an explicit execution label.
 - `ENTRY.md` is rendered and prepended to every step's prompt. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose.
 
 ## Variable grammar
