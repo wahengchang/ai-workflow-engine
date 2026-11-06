@@ -119,6 +119,22 @@ test('validate rejects invalid source syntax in ENTRY, prompts, and control expr
   }
 });
 
+test('template errors name the file or step and line', async t => {
+  const dir = await fixture(t, { '1.1-a.md': 'fine', '1.2-b.md': 'line one\nUse ${{ secrets.X }} here' });
+  await assert.rejects(cli(['validate', dir]), { code: 'INVALID_TEMPLATE', message: /1\.2-b\.md: .*line 2/ });
+  const entryDir = await fixture(t, { 'ENTRY.md': '# x\n{{ name }}', '1.1-a.md': 'a' });
+  await assert.rejects(cli(['validate', entryDir]), { code: 'INVALID_TEMPLATE', message: /ENTRY\.md: .*line 2/ });
+  const flowDir = await fixture(t, {
+    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }),
+    '1.1-loop/1.1.1-a.md': 'a',
+  });
+  await assert.rejects(cli(['validate', flowDir]), { code: 'INVALID_TEMPLATE', message: /1\.1-loop\/FLOW\.json \(until\)/ });
+  const missing = await fixture(t, { '1.1-a.md': '{{ input.nope }}' });
+  const result = await run(missing);
+  assert.equal(result.error.code, 'MISSING_REFERENCE');
+  assert.match(result.error.message, /1\.1-a\.md: Missing template value: input\.nope/);
+});
+
 test('executor argument values are omitted from state and prompts are opt-in', async t => {
   const dir = await fixture(t, { '1.1-a.md': 'OUTPUT::ok' });
   const result = await cli(['run', dir, '--command', process.execPath, '--arg', agent, '--arg', '--api-key=sk-test-SECRET', '--arg', '--token', '--arg', 'OTHER_SECRET']);
@@ -182,7 +198,8 @@ async function assertHeartbeatStopped(dir) {
   const after = await readFile(path.join(dir, 'heartbeat'), 'utf8').catch(() => '');
   assert.equal(after, before, 'grandchild must stop writing');
 }
-for (const signal of ['SIGINT', 'SIGTERM']) {
+const exitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+for (const signal of Object.keys(exitCodes)) {
   test(`${signal} interrupts parallel steps, saves terminal state, and kills descendants`, { skip: process.platform === 'win32', timeout: 10000 }, async t => {
     const dir = await fixture(t, {
       '1.1-parallel/FLOW.json': flow({ type: 'parallel' }),
@@ -201,7 +218,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
       return Object.keys(state.steps).length === 2;
     });
     child.kill(signal);
-    assert.equal(await closed, signal === 'SIGINT' ? 130 : 143);
+    assert.equal(await closed, exitCodes[signal]);
     assert.match(stdout, /Status: INTERRUPTED/);
     const [id] = await readdir(path.join(dir, '.awe/runs'));
     const state = JSON.parse(await readFile(path.join(dir, '.awe/runs', id, 'state.json'), 'utf8'));

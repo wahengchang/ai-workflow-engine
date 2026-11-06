@@ -92,7 +92,7 @@ Or reference its file: {{ steps["1.1"].artifact }}
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored). No implicit cross-step model memory; state moves through declared values and artifact paths.
 
-`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context. Use `{{ input.audience }}`, rather than `{{ audience }}`. `validate`, `plan`, and `run` check template syntax in ENTRY, prompts, and control expressions before execution; they do not yet check reference availability or input declarations.
+`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context. (Behavior change from v0.1: ENTRY.md used to be passed through verbatim, so a literal `{{ ... }}` there must now be escaped as `\{{`.) Template errors name the file (or step, or `FLOW.json` expression) and line. Use `{{ input.audience }}`, rather than `{{ audience }}`. `validate`, `plan`, and `run` check template syntax in ENTRY, prompts, and control expressions before execution; they do not yet check reference availability or input declarations.
 
 Input and step-output values are inserted verbatim, including any `{{ ... }}` they contain. To write literal braces in template source, escape the opening delimiter: `\{{first_name}}` renders as `{{first_name}}`, and `$\{{ secrets.X }}` renders as `${{ secrets.X }}`. In JSON strings, write the backslash as `\\`. An unescaped unsupported or unclosed expression is an `INVALID_TEMPLATE` error.
 
@@ -139,7 +139,7 @@ This model/configuration was reported working in [issue #3](https://github.com/w
 
 `--command claude --arg -p` implies `--executor command`, including when `awe.json` defaults to echo. An explicit conflicting executor is rejected, and `--arg` requires `--command`. Multiline `--var` values are supported within your OS command-line size limit. Executor argument values are omitted from stored executor metadata; only type and executable are recorded. Supply credentials through the executor's supported authentication mechanism rather than command-line arguments.
 
-SIGINT/SIGTERM stop active commands and save the run and active steps as `INTERRUPTED`, with `finishedAt` and a `RUN_INTERRUPTED` error. The CLI exits with 130/143 respectively. On POSIX, interruption and timeout kill the command's process group, including ordinary wrapper descendants; Windows currently kills only the direct child. SIGKILL cannot be trapped. When prompts include customer messages or other untrusted material, explicitly frame that text as data in your instructions.
+SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as `INTERRUPTED`, with `finishedAt` and a `RUN_INTERRUPTED` error. The CLI exits with 130/143/129 respectively (SIGHUP covers a closed terminal or dropped SSH session; executors run in their own process group and would otherwise keep running). On POSIX, interruption and timeout kill the command's process group, including ordinary wrapper descendants; Windows currently kills only the direct child. SIGKILL cannot be trapped. When prompts include customer messages or other untrusted material, explicitly frame that text as data in your instructions.
 
 ## CLI reference
 

@@ -48,8 +48,8 @@ async function executePromptStep(node, context, shared) {
   await shared.store.save(shared.state);
   try {
     const source = await readFile(node.file, 'utf8');
-    const compiled = renderTemplate(source, context);
-    const instructions = renderTemplate(shared.entry.instructions, context);
+    const compiled = renderTemplate(source, context, node.relative);
+    const instructions = renderTemplate(shared.entry.instructions, context, `ENTRY.md (while preparing step ${id})`);
     const prompt = `# Workflow instructions (ENTRY.md)\n${instructions}\n\n# Step ${id} (${node.relative})\n${compiled}\n`;
     if (shared.entry.config.storePrompts === true) {
       shared.state.steps[id].prompt = await shared.store.prompt(id, attempt, prompt);
@@ -99,7 +99,7 @@ async function executeGroup(node, context, shared) {
     return;
   }
   if (node.type === 'if') {
-    const actual = gateValue(renderTemplate(node.config.test, context), node.config);
+    const actual = gateValue(renderTemplate(node.config.test, context, `${node.relative}/FLOW.json (test)`), node.config);
     const matches = actual === gateValue(node.config.equals, node.config, true);
     if (!matches && node.config.elseEquals !== undefined && actual !== gateValue(node.config.elseEquals, node.config, true)) {
       throw new AweError('IF_NO_MATCH', `IF ${node.relative} matched neither equals nor elseEquals`);
@@ -114,7 +114,7 @@ async function executeGroup(node, context, shared) {
     for (let i = 1; i <= node.config.maxIterations; i++) {
       event(shared, 'LOOP_ITERATION', node, { iteration: i });
       for (const child of node.children) await executeGroup(child, context, shared);
-      const actual = gateValue(renderTemplate(node.config.until, context), node.config);
+      const actual = gateValue(renderTemplate(node.config.until, context, `${node.relative}/FLOW.json (until)`), node.config);
       if (actual === gateValue(node.config.equals, node.config, true)) {
         event(shared, 'LOOP_COMPLETED', node, { iteration: i });
         return;

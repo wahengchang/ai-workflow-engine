@@ -58,11 +58,11 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
   const entry = await loadEntry(path.resolve(cwd, target));
   const tree = await discoverWorkflow(entry.root);
   // Check author-written syntax before any executor (and any paid calls) runs.
-  validateTemplate(entry.instructions);
+  validateTemplate(entry.instructions, path.relative(cwd, entry.entryFile) || 'ENTRY.md');
   for (const node of flatten(tree)) {
-    if (node.type === 'prompt') validateTemplate(await readFile(node.file, 'utf8'));
-    if (node.type === 'if') validateTemplate(node.config.test);
-    if (node.type === 'loop') validateTemplate(node.config.until);
+    if (node.type === 'prompt') validateTemplate(await readFile(node.file, 'utf8'), node.relative);
+    if (node.type === 'if') validateTemplate(node.config.test, `${node.relative}/FLOW.json (test)`);
+    if (node.type === 'loop') validateTemplate(node.config.until, `${node.relative}/FLOW.json (until)`);
   }
   const plan = getPlan(tree);
   if (command === 'validate') return { output: `VALID ${entry.entryFile} (${plan.filter(p => p.type === 'prompt').length} prompt steps)`, code: 0 };
