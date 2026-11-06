@@ -45,7 +45,7 @@ my-content-workflow/
     └── 3.2-deliver.md
 ```
 
-All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). `stage-N-*` directories organize work. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
+All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
 
 ### Flow syntax
 
@@ -78,6 +78,10 @@ A bounded LOOP group owns its internal steps and checks its exit expression afte
 
 The runtime knows how to route and limit loops. It **never** decides what good writing is; author your own prompts and control conditions. Branch and loop outputs are checked via exact string comparison.
 
+For an LLM gate, use a dedicated verdict prompt: "Your entire reply must be exactly PASS or FAIL." Models may still reply with Markdown or explanations. Opt in to `"match": "first-line"` on an IF or LOOP to compare only the first non-blank line, stripping one surrounding Markdown emphasis or inline-code wrapper (for example, `**PASS**` or `` `PASS` ``). `"caseInsensitive": true` also ignores letter case. The default remains exact comparison after trimming whitespace.
+
+On an IF, `"elseEquals": "FAIL"` makes the gate strict: output matching neither `equals` nor `elseEquals` fails with `IF_NO_MATCH`. Without `elseEquals`, every non-matching output selects the else branch. Use a human-review branch as the fallback when handling untrusted input.
+
 ### Variables and artifacts
 
 ```md
@@ -87,6 +91,12 @@ Or reference its file: {{ steps["1.1"].artifact }}
 ```
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored). No implicit cross-step model memory; state moves through declared values and artifact paths.
+
+`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context. (Behavior change from v0.1: ENTRY.md used to be passed through verbatim, so a literal `{{ ... }}` there must now be escaped as `\{{`.) Template errors name the file (or step, or `FLOW.json` expression) and line. Use `{{ input.audience }}`, rather than `{{ audience }}`. `validate`, `plan`, and `run` check template syntax in ENTRY, prompts, and control expressions before execution; they do not yet check reference availability or input declarations.
+
+Input and step-output values are inserted verbatim, including any `{{ ... }}` they contain. To write literal braces in template source, escape the opening delimiter: `\{{first_name}}` renders as `{{first_name}}`, and `$\{{ secrets.X }}` renders as `${{ secrets.X }}`. In JSON strings, write the backslash as `\\`. An unescaped unsupported or unclosed expression is an `INVALID_TEMPLATE` error.
+
+To keep compiled prompts for debugging, set `"storePrompts": true` in `awe.json`. Each step then records a `prompt` path to `artifacts/prompt-<step>-attempt-N.md` in its state. This is off by default: compiled prompts can contain private inputs. Outputs and inputs are already stored in run state/artifacts; protect the whole `.awe` directory accordingly.
 
 ### Real AI CLI executor
 
@@ -111,6 +121,25 @@ awe run ./my-content-workflow --executor command --command your-ai-cli --arg --s
 ```
 
 `your-ai-cli` is a placeholder; every provider has different arguments and output conventions. Verify the CLI's stdin/stdout behavior before connecting it. Command executors inherit the invoker's permissions and may incur model charges. Never execute an untrusted workflow with a privileged agent.
+
+For an installed and authenticated Claude Code CLI, a concrete configuration is:
+
+```json
+{
+  "version": 1,
+  "executor": {
+    "type": "command",
+    "argv": ["claude", "-p", "--model", "claude-haiku-5-5"],
+    "timeoutMs": 120000
+  }
+}
+```
+
+This model/configuration was reported working in [issue #3](https://github.com/wahengchang/ai-workflow-engine/issues/3); choose a model available to your Claude account. `-p` reads the prompt from stdin and writes the answer to stdout. No live Claude calls are part of the automated tests.
+
+`--command claude --arg -p` implies `--executor command`, including when `awe.json` defaults to echo. An explicit conflicting executor is rejected, and `--arg` requires `--command`. Multiline `--var` values are supported within your OS command-line size limit. Executor argument values are omitted from stored executor metadata; only type and executable are recorded. Supply credentials through the executor's supported authentication mechanism rather than command-line arguments.
+
+SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as `INTERRUPTED`, with `finishedAt` and a `RUN_INTERRUPTED` error. The CLI exits with 130/143/129 respectively (SIGHUP covers a closed terminal or dropped SSH session; executors run in their own process group and would otherwise keep running). On POSIX, interruption and timeout kill the command's process group, including ordinary wrapper descendants; Windows currently kills only the direct child. SIGKILL cannot be trapped. When prompts include customer messages or other untrusted material, explicitly frame that text as data in your instructions.
 
 ## CLI reference
 

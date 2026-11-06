@@ -28,7 +28,12 @@ function comparePos(a, b) {
 function validConfig(flow, relative) {
   assertAwe(flow && typeof flow === 'object' && !Array.isArray(flow), 'INVALID_FLOW', `${relative}/FLOW.json must be an object`);
   assertAwe(['sequence', 'parallel', 'if', 'loop'].includes(flow.type), 'INVALID_FLOW', `Unknown flow type at ${relative}: ${flow.type}`);
+  if (flow.type === 'if' || flow.type === 'loop') {
+    assertAwe(flow.match === undefined || ['exact', 'first-line'].includes(flow.match), 'INVALID_FLOW', `Invalid match mode at ${relative}`);
+    assertAwe(flow.caseInsensitive === undefined || typeof flow.caseInsensitive === 'boolean', 'INVALID_FLOW', `caseInsensitive must be boolean at ${relative}`);
+  }
   if (flow.type === 'if') {
+    assertAwe(flow.elseEquals === undefined || typeof flow.elseEquals === 'string', 'INVALID_FLOW', `elseEquals must be a string at ${relative}`);
     assertAwe(typeof flow.test === 'string' && typeof flow.equals === 'string' && typeof flow.then === 'string' && typeof flow.else === 'string', 'INVALID_FLOW', `IF flow at ${relative} requires test, equals, then and else strings`);
   }
   if (flow.type === 'loop') {

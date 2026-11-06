@@ -4,21 +4,27 @@ import { getPlan, startRun } from './runtime.js';
 import { readRun } from './storage.js';
 import { AweError } from './errors.js';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { validateTemplate } from './template.js';
 
 export function parseArgs(argv) {
   const [command = 'help', target, ...rest] = argv;
   const flags = { input: {}, argv: [] };
   for (let i = 0; i < rest.length; i++) {
     const value = rest[i];
+    if (['--var', '--executor', '--command', '--arg', '--step'].includes(value) && rest[i + 1] === undefined) {
+      throw new AweError('CLI_USAGE', `${value} requires a value`);
+    }
     if (value === '--var') {
       const pair = rest[++i] ?? '';
-      const match = /^([A-Za-z_][\w-]*)=(.*)$/.exec(pair);
+      const match = /^([A-Za-z_][\w-]*)=([\s\S]*)$/.exec(pair);
       if (!match) throw new AweError('CLI_USAGE', '--var requires key=value');
       flags.input[match[1]] = match[2];
     } else if (value === '--executor') {
       flags.executor = rest[++i];
     } else if (value === '--command') {
       flags.command = rest[++i];
+      if (!flags.command) throw new AweError('CLI_USAGE', '--command requires a non-empty executable');
     } else if (value === '--arg') {
       flags.argv.push(rest[++i]);
     } else if (value === '--step') {
@@ -35,7 +41,7 @@ function prettyPlan(plan) {
   return plan.map(p => `${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
 }
 
-export async function cli(argv, cwd = process.cwd()) {
+export async function cli(argv, cwd = process.cwd(), options = {}) {
   const { command, target, flags } = parseArgs(argv);
   if (command === 'help' || command === '--help' || command === '-h') return { output: HELP, code: 0 };
   if (!target) throw new AweError('CLI_USAGE', `Missing argument.\n${HELP}`);
@@ -51,6 +57,13 @@ export async function cli(argv, cwd = process.cwd()) {
   if (!['validate', 'plan', 'run', 'explain'].includes(command)) throw new AweError('CLI_USAGE', `Unknown command: ${command}\n${HELP}`);
   const entry = await loadEntry(path.resolve(cwd, target));
   const tree = await discoverWorkflow(entry.root);
+  // Check author-written syntax before any executor (and any paid calls) runs.
+  validateTemplate(entry.instructions, path.relative(cwd, entry.entryFile) || 'ENTRY.md');
+  for (const node of flatten(tree)) {
+    if (node.type === 'prompt') validateTemplate(await readFile(node.file, 'utf8'), node.relative);
+    if (node.type === 'if') validateTemplate(node.config.test, `${node.relative}/FLOW.json (test)`);
+    if (node.type === 'loop') validateTemplate(node.config.until, `${node.relative}/FLOW.json (until)`);
+  }
   const plan = getPlan(tree);
   if (command === 'validate') return { output: `VALID ${entry.entryFile} (${plan.filter(p => p.type === 'prompt').length} prompt steps)`, code: 0 };
   if (command === 'plan') return { output: flags.json ? JSON.stringify(plan, null, 2) : prettyPlan(plan), code: 0 };
@@ -60,13 +73,15 @@ export async function cli(argv, cwd = process.cwd()) {
     return { output: JSON.stringify({ entry: entry.entryFile, config: entry.config, node: matching[0].type === 'prompt' ? { ...matching[0], file: undefined } : { type: matching[0].type, relative: matching[0].relative, config: matching[0].config }, instructionSource: entry.entryFile }, null, 2), code: 0 };
   }
   const defaults = entry.config.executor ?? {};
+  if (flags.command && flags.executor && flags.executor !== 'command') throw new AweError('CLI_USAGE', '--command conflicts with a non-command executor');
+  if (flags.argv.length && !flags.command) throw new AweError('CLI_USAGE', '--arg requires --command');
   const executor = {
-    type: flags.executor ?? defaults.type ?? 'echo',
+    type: flags.executor ?? (flags.command ? 'command' : defaults.type ?? 'echo'),
     argv: flags.command ? [flags.command, ...flags.argv] : defaults.argv,
     timeoutMs: defaults.timeoutMs ?? 120000,
   };
   if (executor.type === 'command' && (!executor.argv || !executor.argv.length)) throw new AweError('CLI_USAGE', 'Command executor requires --command <executable> or awe.json executor.argv');
-  const result = await startRun(entry, tree, { executor, input: flags.input });
+  const result = await startRun(entry, tree, { executor, input: flags.input, signal: options.signal });
   return {
     output: `Run: ${result.runId}\nStatus: ${result.status}\nSteps: ${Object.keys(result.steps).length}${result.error ? `\nError: ${result.error.code}: ${result.error.message}` : ''}\nState: ${path.join(entry.root, '.awe', 'runs', result.runId, 'state.json')}`,
     code: result.status === 'COMPLETED' ? 0 : 1,
