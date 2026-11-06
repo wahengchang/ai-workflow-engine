@@ -28,6 +28,7 @@
     "src/",
     "examples/content-generation/",
     "docs/installation.md",
+    "docs/maintenance.md",
     "README.md"
   ]
 }

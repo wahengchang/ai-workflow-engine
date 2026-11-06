@@ -17,7 +17,10 @@ const frontmatter = skill.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n/);
 assert.ok(frontmatter, 'SKILL.md requires YAML frontmatter');
 const name = frontmatter[1].match(/^name:\s*(.+)$/m)?.[1]?.trim();
 const description = frontmatter[1].match(/^description:\s*(.+)$/m)?.[1]?.trim();
+const compatibility = frontmatter[1].match(/^compatibility:\s*(.+)$/m)?.[1]?.trim();
 assert.equal(name, 'awe');
+assert.equal(name, path.basename(path.join(root, '.agents/skills/awe')), 'Skill name must match its directory name');
+assert.ok(!compatibility || compatibility.length <= 500, 'Skill compatibility must be at most 500 characters');
 assert.match(name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 assert.ok(description && description.length <= 1024, 'Skill description must explain when to use AWE');
 
@@ -37,7 +40,7 @@ try {
   const packed = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', temp]));
   assert.equal(packed.length, 1, 'npm pack should create exactly one tarball');
   const items = packed[0].files.map(f => f.path);
-  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'examples/content-generation/ENTRY.md']) {
+  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'examples/content-generation/ENTRY.md']) {
     assert.ok(items.includes(expected), `Missing from npm package: ${expected}`);
   }
   const excluded = items.filter(p => /(^|\/)(\.awe|\.git|node_modules|test|fixtures|\.github|scripts|\.agents)(\/|$)/.test(p) || /(^|\/)(\.env|\.npmrc)(\.|$)/.test(p));
@@ -45,7 +48,7 @@ try {
 
   const prefix = path.join(temp, 'isolated');
   const tarball = path.join(temp, packed[0].filename);
-  runNpm(['install', '--prefix', prefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', tarball]);
+  runNpm(['install', '--prefix', prefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock', '--loglevel=error', tarball]);
   assert.match(runBin(prefix, ['--help']), /awe/i);
   const example = path.join(prefix, 'node_modules', '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation', 'ENTRY.md');
   assert.match(runBin(prefix, ['validate', example]), /VALID/);
