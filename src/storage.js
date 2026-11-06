@@ -29,6 +29,11 @@ export class RunStore {
     await writeFile(file, content, 'utf8');
     return file;
   }
+  async prompt(stepId, attempt, content) {
+    const file = path.join(this.dir, 'artifacts', `prompt-${stepId.replaceAll('.', '-')}-attempt-${attempt}.md`);
+    await writeFile(file, content, 'utf8');
+    return file;
+  }
 }
 
 export async function readRun(root, runId) {
