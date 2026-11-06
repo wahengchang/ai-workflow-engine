@@ -1,0 +1,13 @@
+{
+  "name": "@wahengchang/ai-workflow-engine",
+  "version": "0.1.0",
+  "description": "Filesystem-first AI workflow interpreter with a CLI named awe",
+  "type": "module",
+  "bin": { "awe": "./bin/awe.js" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check bin/awe.js && node --check src/cli.js && node --check src/runtime.js && node --check src/discover.js && npm test"
+  },
+  "license": "UNLICENSED"
+}

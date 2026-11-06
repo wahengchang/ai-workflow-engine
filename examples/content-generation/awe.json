@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "input": {
+    "audience": "beginners",
+    "topic": "How to choose coffee beans"
+  },
+  "executor": { "type": "echo" }
+}

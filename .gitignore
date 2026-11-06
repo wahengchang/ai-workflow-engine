@@ -1,0 +1,4 @@
+node_modules/
+.awe/
+.DS_Store
+*.log
