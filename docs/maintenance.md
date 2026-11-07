@@ -20,7 +20,7 @@ GitHub Actions `.github/workflows/ci.yml` runs on PRs and pushes to main with mi
 
 1. Node 20, 22, 24 on Linux, plus Node 22 on macOS and Windows.
 2. `npm run check` for existing unit and regression tests.
-3. `npm run test:distribution`: check SKILL metadata, build npm tarball using `npm pack`, reject development/secret files, offline-install the tarball, and smoke-test `awe --help`, `validate`, `plan` from the **installed** package.
+3. `npm run test:distribution`: check SKILL metadata, build npm tarball using `npm pack`, reject development/secret files, offline-install the tarball locally and globally in temporary prefixes, link the source with an isolated global prefix, and smoke-test `awe --help`, `validate`, `plan` from the **installed/linked** package. Also exercise npm bin resolution and one-off `npm exec --package=<local-tarball>` from an unrelated working directory. All npm cache writes go to a temporary cache. The test checks that global install creates the command shim; local and one-off npm exec checks launch the actual shim.
 
 No registry credentials, `npm publish`, GitHub Release action, model API key, or paid AI command is used by this CI workflow.
 
