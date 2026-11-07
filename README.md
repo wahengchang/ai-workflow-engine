@@ -22,7 +22,10 @@ To inspect a run, `cd` into the workflow directory and use the run ID printed by
 ```sh
 awe status <run-id>
 awe inspect <run-id> --step 1.2
+awe outputs <run-id>
 ```
+
+From another directory, add `--workflow path/to/workflow` to `status`, `inspect`, or `outputs`.
 
 `awe explain examples/content-generation/ENTRY.md --step 3.1.1` shows how a step is located and configured.
 
@@ -115,6 +118,30 @@ Input and step-output values are inserted verbatim, including any `{{ ... }}` th
 
 To keep compiled prompts for debugging, set `"storePrompts": true` in `awe.json`. Each step then records a `prompt` path to `artifacts/prompt-<step>-attempt-N.md` in its state. This is off by default: compiled prompts can contain private inputs. Outputs and inputs are already stored in run state/artifacts; protect the whole `.awe` directory accordingly.
 
+### Named deliverables
+
+Declare final outputs in `awe.json` by mapping a name to its producing prompt step ID:
+
+```json
+{
+  "version": 1,
+  "outputs": { "article": "3.2" }
+}
+```
+
+For mutually exclusive final steps, use candidate IDs: `"outputs": { "delivery": ["4.1.1", "4.1.2"] }`. Exactly **one** candidate must have completed in the run. An array is not an ordered fallback: no completed candidate fails with `OUTPUT_NOT_FOUND`; multiple completed candidates fail with `OUTPUT_AMBIGUOUS`. Candidates that both ran in different loop iterations are also ambiguous. This maps run deliverables only; it does not provide an IF alias to downstream templates.
+
+`validate`, `plan`, and execution reject invalid output names, duplicate candidates, and IDs that do not identify prompt steps before starting an executor. Names use the same identifier convention as input keys. New runs snapshot the definitions as `outputDefinitions` and publish `outputs` in `state.json` only after the whole workflow succeeds. Each named output records `{ stepId, attempt, artifact }`, using the producing step's latest completed attempt. Configuring outputs is optional and leaves existing workflows unchanged.
+
+```sh
+awe outputs <run-id> --workflow ./my-workflow
+awe outputs <run-id> --workflow ./my-workflow --json
+```
+
+The `run`/`simulate` text summary prints each named output's path; their JSON state contains the same map. `outputs --json` returns `{ runId, status, executionMode, complete, outputDefinitions, outputs, artifacts }`. The `artifacts` list contains one recorded path per step whose latest attempt completed, in numeric step order. Earlier attempt files remain on disk and are traceable through `inspect` events; a failed retry's stale artifact is excluded from this list.
+
+`outputs` reads the saved run without reloading current workflow files, so changing `awe.json` does not change past deliverables. It reports recorded paths without opening or copying the files. Failed, interrupted, and active runs have `complete: false`, no final named outputs, and may expose completed step artifacts as partial results. Echo output stays labeled `SIMULATED`; a named simulated article is still a rendered prompt. Older runs without declarations list completed step artifacts and never guess a final deliverable from the last step. A successful inspection exits 0 even if the inspected run failed; read `status`/`complete` to assess the run.
+
 ### Real AI CLI executor
 
 Configure a command that reads its prompt from **stdin** and prints a complete step result to **stdout**. No shell evaluation is performed:
@@ -167,8 +194,9 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 | `awe explain PATH --step 1.2` | Display a step's source and configuration |
 | `awe simulate PATH [--var key=value] [--json]` | Use echo only; save rendered prompts and label the run SIMULATED |
 | `awe run PATH ... [--json]` | Use the selected/configured executor; save artifacts and event trace |
-| `awe status RUN_ID` | Summarize stored run status |
-| `awe inspect RUN_ID --step 1.2` | Inspect step state (without `--step`, full run trace) |
+| `awe outputs RUN_ID [--json] [--workflow DIR]` | Find named deliverables and latest completed step artifact paths |
+| `awe status RUN_ID [--workflow DIR]` | Summarize stored run status |
+| `awe inspect RUN_ID --step 1.2 [--workflow DIR]` | Inspect step state (without `--step`, full run trace) |
 
 A compatible Skill wrapper is provided at `.agents/skills/awe/SKILL.md`.
 

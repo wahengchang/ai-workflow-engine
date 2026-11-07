@@ -4,14 +4,17 @@ import { renderTemplate } from './template.js';
 import { executePrompt, getExecutionMode } from './executor.js';
 import { RunStore } from './storage.js';
 import { flatten } from './discover.js';
+import { compileOutputs, resolveOutputs } from './outputs.js';
 
 export async function startRun(entry, tree, options = {}) {
   const executor = options.executor ?? entry.config.executor ?? { type: 'echo' };
   assertAwe(['echo', 'command'].includes(executor.type), 'INVALID_EXECUTOR', 'Unknown executor type');
+  const outputDefinitions = compileOutputs(entry.config.outputs, tree);
   const store = new RunStore(entry.root);
   const state = {
     version: 1, runId: store.runId, workflow: entry.root, status: 'RUNNING',
     executionMode: getExecutionMode(executor),
+    outputDefinitions, outputs: {},
     startedAt: new Date().toISOString(), finishedAt: null,
     executor: { type: executor.type, executable: executor.type === 'command' ? executor.argv?.[0] : undefined },
     input: { ...(entry.config.input ?? {}), ...(options.input ?? {}) },
@@ -23,6 +26,7 @@ export async function startRun(entry, tree, options = {}) {
   try {
     await executeGroup(tree, context, shared);
     if (shared.signal?.aborted) throw new AweError('RUN_INTERRUPTED', 'Run interrupted');
+    state.outputs = resolveOutputs(outputDefinitions, state.steps);
     state.status = 'COMPLETED';
   } catch (error) {
     state.status = error.code === 'RUN_INTERRUPTED' ? 'INTERRUPTED' : 'FAILED';

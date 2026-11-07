@@ -3,7 +3,7 @@
 Status: **PROPOSED / NOT IMPLEMENTED**  
 Baseline: `main` v0.1; see [Persona Review](persona-review-2026-11-06.md).
 
-Implementation progress: `awe simulate` and explicit execution-mode labels now exist. Successful simulations keep `status: COMPLETED` and record `executionMode: SIMULATED`; command runs record `COMMAND`. Legacy `run` selection and exit codes remain compatible. Other proposals below retain their stated future status.
+Implementation progress: `awe simulate`, explicit execution-mode labels, and `awe outputs` now exist. Successful simulations keep `status: COMPLETED` and record `executionMode: SIMULATED`; command runs record `COMMAND`. Optional `awe.json` `outputs` declares named deliverables, persisted in `state.json` with their definitions (no separate `outputs.json` yet). Legacy `run` selection and exit codes remain compatible. Other proposals below retain their stated future status.
 
 ## 1. Problem and non-goals
 
@@ -39,7 +39,7 @@ awe status <run-id>
 awe outputs <run-id>
 ```
 
-`init`, `doctor`, `outputs`, and `--executor codex` are **proposed v0.2+ commands, not currently available**. `simulate`, `run`, and `plan` exist; see the README for current options. `doctor` checks executable availability, auth readiness where detectable, output folder write access and dangerous commands; it does not authenticate automatically.
+`init`, `doctor`, and `--executor codex` are **proposed v0.2+ commands, not currently available**. `simulate`, `run`, `plan`, and `outputs` exist; see the README for current options. `doctor` checks executable availability, auth readiness where detectable, output folder write access and dangerous commands; it does not authenticate automatically.
 
 ### B. Advanced workflow author (target UX)
 

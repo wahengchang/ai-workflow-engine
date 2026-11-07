@@ -10,6 +10,7 @@
 - **Step output** = content emitted by a command executor, stored as a separate artifact.
 - **Run** = immutable run identifier with state + event trace under `.awe/runs/<run-id>`.
 - **Execution mode** = additive run-state `executionMode: SIMULATED | COMMAND`, derived from the effective executor. Success/failure remains in `status`; command execution does not prove that an AI model was used.
+- **Named deliverable** = optional `awe.json` `outputs` mapping a name to a prompt ID or candidate IDs. The normalized definitions are saved as `outputDefinitions` before execution. After the whole workflow succeeds, exactly one completed candidate per name is resolved to `{ stepId, attempt, artifact }` in run-state `outputs`. Missing or ambiguous deliverables fail the run without publishing a partial final map.
 
 ## Execution boundary
 
@@ -34,6 +35,8 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 ## Interfaces
 
 `awe` CLI → Entry Loader → Directory Resolver → Flow Controller → Prompt Executor → RunStore. `awe explain` shows resolved location/configuration; `awe status` and `awe inspect` expose state and events.
+
+`awe outputs` reads stored state only, without rediscovery or current configuration. JSON includes run status/mode, a `complete` flag, named outputs, and latest completed step artifact paths. Failed/interrupted/running runs expose partial artifacts with no final output map. Legacy runs do not infer named outputs from the last step. `status`, `inspect`, and `outputs` accept `--workflow DIR` to select the run store explicitly; missing runs raise `RUN_NOT_FOUND`.
 
 ## Security and compatibility
 

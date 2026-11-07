@@ -4,5 +4,6 @@
     "audience": "beginners",
     "topic": "How to choose coffee beans"
   },
-  "executor": { "type": "echo" }
+  "executor": { "type": "echo" },
+  "outputs": { "article": "3.2" }
 }
