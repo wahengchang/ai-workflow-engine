@@ -7,6 +7,7 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { validateTemplate } from './template.js';
 import { getExecutionMode } from './executor.js';
+import { validateReferences } from './preflight.js';
 
 export function parseArgs(argv) {
   const [command = 'help', target, ...rest] = argv;
@@ -74,6 +75,7 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
     if (node.type === 'if') validateTemplate(node.config.test, `${node.relative}/FLOW.json (test)`);
     if (node.type === 'loop') validateTemplate(node.config.until, `${node.relative}/FLOW.json (until)`);
   }
+  await validateReferences(entry, tree);
   const plan = getPlan(tree);
   if (command === 'validate') return { output: `VALID ${entry.entryFile} (${plan.filter(p => p.type === 'prompt').length} prompt steps)`, code: 0 };
   if (command === 'plan') return { output: flags.json ? JSON.stringify(plan, null, 2) : prettyPlan(plan), code: 0 };

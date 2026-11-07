@@ -16,7 +16,7 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 
 ## Workflow commands (currently supported)
 
-- `awe validate path/to/ENTRY.md` — check file conventions and declared control groups.
+- `awe validate path/to/ENTRY.md` — check file conventions, control groups and guaranteed availability of step references before execution.
 - `awe plan path/to/ENTRY.md` — inspect numeric step ordering and IF/LOOP/PARALLEL groups.
 - `awe explain path/to/ENTRY.md --step 1.2` — inspect the selected step's source and config.
 - `awe run path/to/ENTRY.md --var topic="..."` — run with the configured executor; default is echo.
