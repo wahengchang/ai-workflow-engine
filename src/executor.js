@@ -1,6 +1,18 @@
 import { spawn } from 'node:child_process';
 import { AweError, assertAwe } from './errors.js';
 
+function redactArguments(message, argv) {
+  // Treat every positional argument and --option=value payload as private.
+  // Do not guess which provider-specific flag names represent credentials.
+  const values = argv.slice(1).flatMap(arg => {
+    const equals = arg.indexOf('=');
+    return [arg, ...(equals >= 0 ? [arg.slice(equals + 1)] : [])];
+  }).filter(Boolean).sort((a, b) => b.length - a.length);
+  // A single pass also avoids re-matching the replacement text itself.
+  const pattern = values.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return pattern ? message.replace(new RegExp(pattern, 'g'), '[REDACTED]') : message;
+}
+
 export function getExecutionMode(executor) {
   if (executor?.type === 'echo') return 'SIMULATED';
   if (executor?.type === 'command') return 'COMMAND';
@@ -49,12 +61,14 @@ export async function executePrompt(prompt, options) {
       finish(new AweError('EXECUTOR_TIMEOUT', `Command timed out after ${timeoutMs} ms`));
     }, timeoutMs);
     options.signal?.addEventListener('abort', interrupt, { once: true });
-    child.on('error', error => finish(new AweError('EXECUTOR_ERROR', `Failed to spawn ${options.argv[0]}: ${error.message}`)));
-    child.stdout.on('data', chunk => { stdout += chunk.toString(); });
-    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', error => finish(new AweError('EXECUTOR_ERROR', redactArguments(`Failed to spawn ${options.argv[0]}: ${error.message}`, options.argv))));
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('close', code => {
       if (code === 0) finish(null, stdout.trimEnd());
-      else finish(new AweError('EXECUTOR_FAILED', `Command exited ${code}: ${stderr.trim().slice(0, 1000)}`));
+      else finish(new AweError('EXECUTOR_FAILED', `Command exited ${code}: ${redactArguments(stderr.trim(), options.argv).slice(0, 1000)}`));
     });
     child.stdin.on('error', () => {}); // e.g. command exits before consuming stdin
     child.stdin.end(prompt);
