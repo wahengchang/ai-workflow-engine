@@ -7,8 +7,23 @@ import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { validateTemplate } from './template.js';
 import { getExecutionMode } from './executor.js';
+import { initWorkflow } from './init.js';
 
 export function parseArgs(argv) {
+  if (argv[0] === 'init') {
+    const flags = { template: 'content' };
+    for (let i = 1; i < argv.length; i += 2) {
+      const flag = argv[i];
+      const value = argv[i + 1];
+      if (!['--template', '--out'].includes(flag)) throw new AweError('CLI_USAGE', `Unknown init option: ${flag}`);
+      if (!value || value.startsWith('--')) throw new AweError('CLI_USAGE', `${flag} requires a value`);
+      const key = flag.slice(2);
+      if (key === 'out' && flags.out !== undefined) throw new AweError('CLI_USAGE', '--out may only be supplied once');
+      flags[key] = value;
+    }
+    if (!flags.out) throw new AweError('CLI_USAGE', 'awe init requires --out <new-directory>');
+    return { command: 'init', flags };
+  }
   const [command = 'help', target, ...rest] = argv;
   const flags = { input: {}, argv: [] };
   for (let i = 0; i < rest.length; i++) {
@@ -36,7 +51,7 @@ export function parseArgs(argv) {
   return { command, target, flags };
 }
 
-const HELP = `awe — filesystem-first AI workflow engine (v0.1)\n\nUsage:\n  awe validate <ENTRY.md|directory>\n  awe plan <ENTRY.md|directory> [--json]\n  awe simulate <ENTRY.md|directory> [--var name=value ...] [--json]\n  awe run <ENTRY.md|directory> [--executor echo|command] [--command executable] [--arg value ...] [--var name=value ...] [--json]\n  awe status <run-id> [--json]              (run from project root)\n  awe inspect <run-id> [--step 1.2]         (run from project root)\n  awe explain <ENTRY.md|directory> [--step 1.2]\n\nsimulate always uses echo and never starts an external executor.\nrun uses awe.json or CLI executor settings; without either, it defaults to echo.\nSIMULATED artifacts contain rendered prompts, not AI-generated content.\nFor an actual AI CLI use --executor command --command <binary> --arg <argument>.\n`;
+const HELP = `awe — filesystem-first AI workflow engine (v0.1)\n\nUsage:\n  awe init [--template content] --out <new-directory>\n  awe validate <ENTRY.md|directory>\n  awe plan <ENTRY.md|directory> [--json]\n  awe simulate <ENTRY.md|directory> [--var name=value ...] [--json]\n  awe run <ENTRY.md|directory> [--executor echo|command] [--command executable] [--arg value ...] [--var name=value ...] [--json]\n  awe status <run-id> [--json]              (run from project root)\n  awe inspect <run-id> [--step 1.2]         (run from project root)\n  awe explain <ENTRY.md|directory> [--step 1.2]\n\nsimulate always uses echo and never starts an external executor.\nrun uses awe.json or CLI executor settings; without either, it defaults to echo.\nSIMULATED artifacts contain rendered prompts, not AI-generated content.\nFor an actual AI CLI use --executor command --command <binary> --arg <argument>.\n`;
 
 function prettyPlan(plan) {
   return plan.map(p => `${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
@@ -51,6 +66,11 @@ function executionSummary(state) {
 export async function cli(argv, cwd = process.cwd(), options = {}) {
   const { command, target, flags } = parseArgs(argv);
   if (command === 'help' || command === '--help' || command === '-h') return { output: HELP, code: 0 };
+  if (command === 'init') {
+    const destination = path.resolve(cwd, flags.out);
+    const entryFile = await initWorkflow(destination, flags.template);
+    return { output: `Created ${entryFile}\nExecutor: echo (simulation; no AI calls).\nNext: use awe validate, awe plan, and awe simulate with the ENTRY.md path above.\nConfigure a command executor in awe.json before generating real content.`, code: 0 };
+  }
   if (!target) throw new AweError('CLI_USAGE', `Missing argument.\n${HELP}`);
   if (command === 'simulate' && (flags.executor !== undefined || flags.command !== undefined || flags.argv.length)) {
     throw new AweError('CLI_USAGE', 'awe simulate always uses echo; executor options are only supported by awe run');

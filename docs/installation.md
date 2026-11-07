@@ -9,7 +9,7 @@
 | Run an AWE workflow from a terminal | **AWE CLI** using npm, or clone + `npm link` | Provides the actual `awe` command |
 | Tell Codex / Claude Code / OpenCode how to operate AWE | **Agent Skill** using `npx skills add` | Installs instructions; **does not** install the CLI |
 | Run a single command without a global CLI | `npm exec` / `npx` | Planned once a registry release is verified |
-| Create a new content workflow | `awe init` | **Planned**; not implemented in v0.1 |
+| Create a new content workflow | `awe init` | Available from source; creates a new directory with the content template |
 
 ## Prerequisites
 
@@ -94,9 +94,10 @@ Use a **pinned Git ref** when reproducibility matters, for example `wahengchang/
 ## 5. First workflow test (safe; no paid AI calls)
 
 ```sh
-awe validate /path/to/workflow/ENTRY.md
-awe plan /path/to/workflow/ENTRY.md
-awe run /path/to/workflow/ENTRY.md --var topic="Choosing coffee beans"
+awe init --template content --out my-workflow
+awe validate my-workflow/ENTRY.md
+awe plan my-workflow/ENTRY.md
+awe simulate my-workflow/ENTRY.md --var topic="Choosing coffee beans"
 ```
 
 The default executor is `echo`; the run's `COMPLETED` status means **the wiring ran**, **not** that AI generated an article. To run real AI, explicitly configure an approved command executor in `awe.json` or on the CLI, such as `--executor command --command <agent-binary> --arg <arg>`. See [README](../README.md) for the stdin/stdout contract and warnings about costs and permissions.
