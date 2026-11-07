@@ -27,9 +27,10 @@ cd ai-workflow-engine
 npm install         # no external runtime dependencies
 npm link            # exposes `awe` locally
 
-awe validate examples/content-generation/ENTRY.md
-awe plan examples/content-generation/ENTRY.md
-awe simulate examples/content-generation/ENTRY.md --var topic="Choosing coffee beans"
+awe init --template content --out my-content-workflow
+awe validate my-content-workflow/ENTRY.md
+awe plan my-content-workflow/ENTRY.md
+awe simulate my-content-workflow/ENTRY.md --var topic="Choosing coffee beans"
 ```
 
 To inspect a run, `cd` into the workflow directory and use the run ID printed by the command:
@@ -40,6 +41,10 @@ awe inspect <run-id> --step 1.2
 ```
 
 `awe explain examples/content-generation/ENTRY.md --step 3.1.1` shows how a step is located and configured.
+
+### Create a workflow
+
+`awe init --template content --out DIR` copies the bundled six-step content example into a new directory. The template includes default inputs, sequential drafting, parallel reviews and a delivery step. `content` is the default template. Existing directories (including empty ones), files and symlinks are refused; there is no overwrite option. Initialization makes no model calls or network requests and uses the echo executor. Edit the prompts and `awe.json`, then validate, plan and simulate before configuring a real executor. Existing workflows and run formats are unchanged.
 
 ### Simulation and command execution
 
@@ -177,6 +182,7 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 
 | Command | Purpose |
 |---|---|
+| `awe init [--template content] --out DIR` | Create a new content workflow using echo by default |
 | `awe validate PATH` | Validate file conventions and control groups |
 | `awe plan PATH` | Print statically resolved group and step order |
 | `awe explain PATH --step 1.2` | Display a step's source and configuration |

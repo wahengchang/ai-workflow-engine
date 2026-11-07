@@ -16,6 +16,8 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 
 ## Workflow commands (currently supported)
 
+- `awe init --template content --out <new-directory>` — create a six-step content workflow using echo; refuses existing destinations.
+- `awe simulate path/to/ENTRY.md` — test wiring with echo, regardless of configured real executor; no AI calls.
 - `awe validate path/to/ENTRY.md` — check file conventions, control groups and guaranteed availability of step references before execution.
 - `awe plan path/to/ENTRY.md` — inspect numeric step ordering and IF/LOOP/PARALLEL groups.
 - `awe explain path/to/ENTRY.md --step 1.2` — inspect the selected step's source and config.
