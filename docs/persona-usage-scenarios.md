@@ -32,7 +32,7 @@ awe outputs <run-id>
 
 Success: the writer sees ordered steps, knows simulation did not generate a real article, can locate the final artifact, and can inspect a failure without reading engine source.
 
-**v0.1 status:** numbered prompts, `plan`, `run`, artifacts and `inspect` exist; no `init`, `simulate` distinction, explicit final output map or provider-specific adapter yet.
+**Current status:** numbered prompts, `plan`, `run`, `simulate`, artifacts and `inspect` exist. Echo runs are labeled `SIMULATED` in CLI/state; no `init`, explicit final output map or provider-specific adapter yet. Simulation renders prompts without generating an article.
 
 ## Scenario B — senior engineer: a small but non-trivial content workflow
 

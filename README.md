@@ -29,7 +29,7 @@ npm link            # exposes `awe` locally
 
 awe validate examples/content-generation/ENTRY.md
 awe plan examples/content-generation/ENTRY.md
-awe run examples/content-generation/ENTRY.md --var topic="Choosing coffee beans"
+awe simulate examples/content-generation/ENTRY.md --var topic="Choosing coffee beans"
 ```
 
 To inspect a run, `cd` into the workflow directory and use the run ID printed by the command:
@@ -40,6 +40,23 @@ awe inspect <run-id> --step 1.2
 ```
 
 `awe explain examples/content-generation/ENTRY.md --step 3.1.1` shows how a step is located and configured.
+
+### Simulation and command execution
+
+`awe simulate PATH` always uses the built-in echo executor, even when `awe.json` configures an external AI command. It accepts `--var name=value` and `--json`; executor options (`--executor`, `--command`, `--arg`) are rejected. No external executor is started, and an AI CLI does not need to be installed or authenticated.
+
+Simulation renders ENTRY and step templates, writes artifacts, and follows the same sequence/IF/LOOP/PARALLEL rules as a run. Its artifacts contain **rendered prompts**, not generated content or reviewer verdicts. An IF depending on an echoed prompt may choose a different branch than a real executor; a LOOP waiting for an AI-generated `PASS` can fail with `LOOP_EXHAUSTED`. Use `plan` to inspect all branches. Simulation does not prove content quality or exercise every possible route.
+
+Both `run` and `status` display an execution label:
+
+```text
+Status: COMPLETED
+Execution: SIMULATED (echo; no AI calls)
+```
+
+New run states store `executionMode: "SIMULATED"` for echo or `"COMMAND"` for an external command. `COMMAND` records how execution happened; it does not certify that a model was called. `awe run PATH --json` and `awe simulate PATH --json` return the stored run state, including this field, as does `awe status RUN_ID --json`.
+
+Compatibility: `awe run` still respects CLI/configured executors and defaults to echo only when none is configured. Explicit `--executor echo` is also labeled `SIMULATED`. Existing status values (`COMPLETED`, `FAILED`, `INTERRUPTED`) and exit codes remain unchanged; execution mode is separate from success/failure. Text `status` infers the mode of older runs from their recorded executor, or shows `UNKNOWN` if it was not recorded, without rewriting their state.
 
 ## Workflow convention
 
@@ -163,7 +180,8 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 | `awe validate PATH` | Validate file conventions and control groups |
 | `awe plan PATH` | Print statically resolved group and step order |
 | `awe explain PATH --step 1.2` | Display a step's source and configuration |
-| `awe run PATH ...` | Run from `ENTRY.md`, save artifacts and event trace |
+| `awe simulate PATH [--var key=value] [--json]` | Use echo only; save rendered prompts and label the run SIMULATED |
+| `awe run PATH ... [--json]` | Use the selected/configured executor; save artifacts and event trace |
 | `awe status RUN_ID` | Summarize stored run status |
 | `awe inspect RUN_ID --step 1.2` | Inspect step state (without `--step`, full run trace) |
 

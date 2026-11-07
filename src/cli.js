@@ -6,6 +6,7 @@ import { AweError } from './errors.js';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { validateTemplate } from './template.js';
+import { getExecutionMode } from './executor.js';
 
 export function parseArgs(argv) {
   const [command = 'help', target, ...rest] = argv;
@@ -35,26 +36,35 @@ export function parseArgs(argv) {
   return { command, target, flags };
 }
 
-const HELP = `awe — filesystem-first AI workflow engine (v0.1)\n\nUsage:\n  awe validate <ENTRY.md|directory>\n  awe plan <ENTRY.md|directory> [--json]\n  awe run <ENTRY.md|directory> [--executor echo|command] [--command executable] [--arg value ...] [--var name=value ...]\n  awe status <run-id> [--json]              (run from project root)\n  awe inspect <run-id> [--step 1.2]         (run from project root)\n  awe explain <ENTRY.md|directory> [--step 1.2]\n\nNo external actions are executed by default: echo executor is for smoke tests.\nFor an actual AI CLI use --executor command --command <binary> --arg <argument>.\n`;
+const HELP = `awe — filesystem-first AI workflow engine (v0.1)\n\nUsage:\n  awe validate <ENTRY.md|directory>\n  awe plan <ENTRY.md|directory> [--json]\n  awe simulate <ENTRY.md|directory> [--var name=value ...] [--json]\n  awe run <ENTRY.md|directory> [--executor echo|command] [--command executable] [--arg value ...] [--var name=value ...] [--json]\n  awe status <run-id> [--json]              (run from project root)\n  awe inspect <run-id> [--step 1.2]         (run from project root)\n  awe explain <ENTRY.md|directory> [--step 1.2]\n\nsimulate always uses echo and never starts an external executor.\nrun uses awe.json or CLI executor settings; without either, it defaults to echo.\nSIMULATED artifacts contain rendered prompts, not AI-generated content.\nFor an actual AI CLI use --executor command --command <binary> --arg <argument>.\n`;
 
 function prettyPlan(plan) {
   return plan.map(p => `${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
+}
+
+function executionSummary(state) {
+  const mode = state.executionMode ?? getExecutionMode(state.executor);
+  const detail = { SIMULATED: 'echo; no AI calls', COMMAND: 'external executor', UNKNOWN: 'executor not recorded' }[mode];
+  return `Execution: ${mode}${detail ? ` (${detail})` : ''}`;
 }
 
 export async function cli(argv, cwd = process.cwd(), options = {}) {
   const { command, target, flags } = parseArgs(argv);
   if (command === 'help' || command === '--help' || command === '-h') return { output: HELP, code: 0 };
   if (!target) throw new AweError('CLI_USAGE', `Missing argument.\n${HELP}`);
+  if (command === 'simulate' && (flags.executor !== undefined || flags.command !== undefined || flags.argv.length)) {
+    throw new AweError('CLI_USAGE', 'awe simulate always uses echo; executor options are only supported by awe run');
+  }
   if (['status', 'inspect'].includes(command)) {
     const state = await readRun(cwd, target);
     if (command === 'status') {
-      return { output: flags.json ? JSON.stringify(state, null, 2) : `${state.runId}: ${state.status}\nSteps: ${Object.keys(state.steps).length}\n${state.error ? `Error: ${state.error.code}: ${state.error.message}` : ''}`, code: 0 };
+      return { output: flags.json ? JSON.stringify(state, null, 2) : `${state.runId}: ${state.status}\n${executionSummary(state)}\nSteps: ${Object.keys(state.steps).length}\n${state.error ? `Error: ${state.error.code}: ${state.error.message}` : ''}`, code: 0 };
     }
     const result = flags.step ? state.steps[flags.step] : state;
     if (!result) throw new AweError('STEP_NOT_FOUND', `No step ${flags.step} in run ${target}`);
     return { output: JSON.stringify(result, null, 2), code: 0 };
   }
-  if (!['validate', 'plan', 'run', 'explain'].includes(command)) throw new AweError('CLI_USAGE', `Unknown command: ${command}\n${HELP}`);
+  if (!['validate', 'plan', 'run', 'simulate', 'explain'].includes(command)) throw new AweError('CLI_USAGE', `Unknown command: ${command}\n${HELP}`);
   const entry = await loadEntry(path.resolve(cwd, target));
   const tree = await discoverWorkflow(entry.root);
   // Check author-written syntax before any executor (and any paid calls) runs.
@@ -75,7 +85,7 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
   const defaults = entry.config.executor ?? {};
   if (flags.command && flags.executor && flags.executor !== 'command') throw new AweError('CLI_USAGE', '--command conflicts with a non-command executor');
   if (flags.argv.length && !flags.command) throw new AweError('CLI_USAGE', '--arg requires --command');
-  const executor = {
+  const executor = command === 'simulate' ? { type: 'echo' } : {
     type: flags.executor ?? (flags.command ? 'command' : defaults.type ?? 'echo'),
     argv: flags.command ? [flags.command, ...flags.argv] : defaults.argv,
     timeoutMs: defaults.timeoutMs ?? 120000,
@@ -83,7 +93,7 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
   if (executor.type === 'command' && (!executor.argv || !executor.argv.length)) throw new AweError('CLI_USAGE', 'Command executor requires --command <executable> or awe.json executor.argv');
   const result = await startRun(entry, tree, { executor, input: flags.input, signal: options.signal });
   return {
-    output: `Run: ${result.runId}\nStatus: ${result.status}\nSteps: ${Object.keys(result.steps).length}${result.error ? `\nError: ${result.error.code}: ${result.error.message}` : ''}\nState: ${path.join(entry.root, '.awe', 'runs', result.runId, 'state.json')}`,
+    output: flags.json ? JSON.stringify(result, null, 2) : `Run: ${result.runId}\nStatus: ${result.status}\n${executionSummary(result)}\nSteps: ${Object.keys(result.steps).length}${result.error ? `\nError: ${result.error.code}: ${result.error.message}` : ''}\nState: ${path.join(entry.root, '.awe', 'runs', result.runId, 'state.json')}`,
     code: result.status === 'COMPLETED' ? 0 : 1,
   };
 }

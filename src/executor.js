@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process';
 import { AweError, assertAwe } from './errors.js';
 
+export function getExecutionMode(executor) {
+  if (executor?.type === 'echo') return 'SIMULATED';
+  if (executor?.type === 'command') return 'COMMAND';
+  return 'UNKNOWN';
+}
+
 export async function executePrompt(prompt, options) {
   if (options.signal?.aborted) throw new AweError('RUN_INTERRUPTED', 'Run interrupted');
   if (options.type === 'echo') return prompt;

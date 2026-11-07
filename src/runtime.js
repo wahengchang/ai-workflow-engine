@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { AweError, assertAwe } from './errors.js';
 import { renderTemplate } from './template.js';
-import { executePrompt } from './executor.js';
+import { executePrompt, getExecutionMode } from './executor.js';
 import { RunStore } from './storage.js';
 import { flatten } from './discover.js';
 
@@ -11,6 +11,7 @@ export async function startRun(entry, tree, options = {}) {
   const store = new RunStore(entry.root);
   const state = {
     version: 1, runId: store.runId, workflow: entry.root, status: 'RUNNING',
+    executionMode: getExecutionMode(executor),
     startedAt: new Date().toISOString(), finishedAt: null,
     executor: { type: executor.type, executable: executor.type === 'command' ? executor.argv?.[0] : undefined },
     input: { ...(entry.config.input ?? {}), ...(options.input ?? {}) },
