@@ -4,11 +4,26 @@
 
 > **v0.1 foundation:** Working CLI and deterministic routing. The default `echo` executor is a wiring-only simulator, **not an LLM**. For real content generation, supply a compatible command-line AI agent. This is not yet a durable, production-ready workflow service.
 
+## Installation: CLI vs Agent Skill
+
+**Engine installation and Skill installation are two separate actions.** The CLI executes workflows; the Skill only teaches compatible AI agents to call that already-installed CLI. AWE requires Node.js 20+; the independently maintained Skills CLI has its own Node requirements.
+
+| Route | Use case | Current status |
+| --- | --- | --- |
+| Clone + `npm link` | Local development and testing | Documented v0.1 path |
+| `npm install -g github:wahengchang/ai-workflow-engine` | Install CLI from GitHub source | npm-supported mechanism; clean-machine verification pending |
+| `npm install -g @wahengchang/ai-workflow-engine` | Published registry CLI | **Future target; publication not confirmed** |
+| `npx skills add wahengchang/ai-workflow-engine --skill awe` | Optional Agent Skill | Instructions only; verify remote discovery/install |
+
+See the detailed [installation, update and uninstall guide](docs/installation.md) and [long-term maintenance/release policy](docs/maintenance.md). Run `npm run test:distribution` to test a packed tarball in an isolated install, without downloading an AI model.
+
 ## Quick start
 
-Requires Node.js >=20.
+Requires Node.js >=20. Clone this repository and enter it first, unless it is already checked out.
 
 ```sh
+git clone https://github.com/wahengchang/ai-workflow-engine.git
+cd ai-workflow-engine
 npm install         # no external runtime dependencies
 npm link            # exposes `awe` locally
 
@@ -159,6 +174,7 @@ A compatible Skill wrapper is provided at `.agents/skills/awe/SKILL.md`.
 ```sh
 npm test
 npm run check
+npm run test:distribution
 ```
 
 See [architecture](docs/architecture.md) and [implementation plan](docs/plan.md). Key limitations: no crash-time `resume`, no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.

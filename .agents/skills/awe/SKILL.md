@@ -1,16 +1,30 @@
 ---
 name: awe
-summary: Operate the AI Workflow Engine CLI to validate, plan, run and inspect filesystem-defined workflows.
+description: Run, plan, validate, explain and inspect filesystem-defined AI workflows with the AWE CLI. Use when the user provides an ENTRY.md, numbered Markdown prompt steps, or asks to automate a research, writing, review or similar pipeline.
+compatibility: Requires the separately installed awe CLI and Node.js 20 or newer. Optional real AI command executor must be configured by the user.
 ---
 
-# AWE CLI skill
+# AWE Workflow CLI
 
-Use `awe` to run a workflow beginning at `ENTRY.md`. Do not interpret numbered prompts yourself when AWE is installed: the engine is the authority for flow order, IF/LOOP/PARALLEL routing and outputs.
+AWE is the executable workflow interpreter; this Skill is **instructions only** and does not install AWE or any AI model.
 
-1. `awe validate path/to/ENTRY.md` to check conventions.
-2. `awe plan path/to/ENTRY.md` to inspect the execution layout.
-3. `awe run path/to/ENTRY.md --var topic="..."` to execute. Default `echo` mode only tests wiring.
-4. Use `--executor command --command <AI_CLI> --arg <ARG>` only when explicitly configured and permitted by the user.
-5. `awe status <run-id>` and `awe inspect <run-id> --step 1.2` are run from the workflow root.
+## Before using AWE
 
-AWE cannot guarantee content quality, perform arbitrary external publication, or resume a mid-run crash in v0.1. Never claim otherwise.
+1. Check whether `awe` is available (`awe --help`). If missing, stop and explain the CLI installation options in the [installation guide](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/installation.md). Do not assume adding this Skill installs the CLI.
+2. Locate the user's workflow `ENTRY.md` and confirm it is trusted. Use `awe validate <path>` then `awe plan <path>` before execution.
+3. Warn that a workflow with the default `echo` executor only echoes assembled prompts. **A successful echo run is not an AI-generated result.** A real run requires a user-configured, authenticated AI CLI/command executor. External commands inherit the user's machine permissions and may incur costs.
+
+## Workflow commands (currently supported)
+
+- `awe validate path/to/ENTRY.md` — check file conventions and declared control groups.
+- `awe plan path/to/ENTRY.md` — inspect numeric step ordering and IF/LOOP/PARALLEL groups.
+- `awe explain path/to/ENTRY.md --step 1.2` — inspect the selected step's source and config.
+- `awe run path/to/ENTRY.md --var topic="..."` — run with the configured executor; default is echo.
+- `awe run path/to/ENTRY.md --executor command --command <approved-agent-cli> --arg <argument>` — invoke a separately installed command-line AI executor. Verify its stdin/stdout contract before running it.
+- From the workflow directory: `awe status <run-id>` and `awe inspect <run-id> --step 1.2`.
+
+AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a completed simulation produced content. Do not promise crash-time resume, publication, subjective quality guarantees, or auto-installation of AI dependencies.
+
+## Maintenance
+
+CLI distribution and Skill distribution have independent installation/update lifecycles. Follow [installation](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/installation.md) and [maintenance](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/maintenance.md) guidance. When modifying AWE CLI commands, update this Skill in the same PR.
