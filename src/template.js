@@ -34,6 +34,10 @@ export function validateTemplate(source, label) {
   labelled(label, () => parseTemplate(source));
 }
 
+export function templateReferences(source, label) {
+  return labelled(label, () => parseTemplate(source).filter(part => typeof part !== 'string'));
+}
+
 export function renderTemplate(source, context, label) {
   return labelled(label, () => parseTemplate(source).map(part => {
     if (typeof part === 'string') return part;

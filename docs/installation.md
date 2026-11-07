@@ -49,7 +49,7 @@ Prefer a pinned Git tag or **full commit SHA** for automation:
 npm install -g 'github:wahengchang/ai-workflow-engine#<full-commit-sha>'
 ```
 
-This route relies on your npm/Git environment. The repository's CI includes a local tarball install smoke test, but does **not** prove that a remote GitHub install works on every end-user machine. Treat this as a supported npm mechanism pending the explicit release checklist.
+This route relies on your npm/Git environment. The repository's CI tests local/global tarball installs, source linking and offline one-off execution from a local tarball. These checks do **not** prove a remote GitHub install works on an end-user machine. Treat this as a supported npm mechanism pending the explicit release checklist.
 
 ## 3. Official npm registry install (future; not confirmed published)
 
@@ -63,7 +63,7 @@ awe --help
 npm exec --package=@wahengchang/ai-workflow-engine -- awe --help
 ```
 
-The GitHub repository being public does not automatically publish this npm package.
+The GitHub repository being public does not automatically publish this npm package. CI verifies `npm exec --package=<local-tarball> -- awe --help`, validation and planning offline; that checks binary selection but is not a registry install test.
 
 ## 4. Optional Agent Skill installation (separate from Engine)
 
@@ -135,3 +135,7 @@ Only run trusted workflows and external commands: AWE does **not** sandbox an ag
 - [Skills CLI command reference](https://github.com/vercel-labs/skills/blob/main/docs/commands.md)
 
 See [maintenance and release policy](maintenance.md) for ongoing CI, versioning, manual compatibility tests and release gating.
+
+## Automated installation coverage
+
+`npm run test:distribution` uses temporary npm prefixes and a temporary cache. It packs the allowlisted files, installs the tarball locally and globally, creates a source link, and invokes the CLI from an unrelated working directory. It checks npm bin resolution with `npm exec`, plus explicit one-off execution from the local tarball. Help, validation and planning must work for each route. Cleanup removes the test prefixes and cache; the configured global installation is unchanged. These are isolated-prefix tests on the current machine, not clean-machine remote installation or interactive agent activation tests. No registry publication, GitHub release, model calls or network dependency downloads are involved.

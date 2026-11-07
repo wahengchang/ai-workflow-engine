@@ -15,7 +15,7 @@
 | `npm install -g @wahengchang/ai-workflow-engine` | Published registry CLI | **Future target; publication not confirmed** |
 | `npx skills add wahengchang/ai-workflow-engine --skill awe` | Optional Agent Skill | Instructions only; verify remote discovery/install |
 
-See the detailed [installation, update and uninstall guide](docs/installation.md) and [long-term maintenance/release policy](docs/maintenance.md). Run `npm run test:distribution` to test a packed tarball in an isolated install, without downloading an AI model.
+See the detailed [installation, update and uninstall guide](docs/installation.md) and [long-term maintenance/release policy](docs/maintenance.md). Run `npm run test:distribution` to test isolated local/global tarball installs, source linking and offline one-off `npm exec` with a local tarball. It checks help, validation and planning without downloading an AI model or touching your global CLI prefix. Remote GitHub/registry and interactive Agent Skill installation remain separate release checks.
 
 ## Quick start
 
@@ -129,7 +129,7 @@ Or reference its file: {{ steps["1.1"].artifact }}
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored). No implicit cross-step model memory; state moves through declared values and artifact paths.
 
-`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context. (Behavior change from v0.1: ENTRY.md used to be passed through verbatim, so a literal `{{ ... }}` there must now be escaped as `\{{`.) Template errors name the file (or step, or `FLOW.json` expression) and line. Use `{{ input.audience }}`, rather than `{{ audience }}`. `validate`, `plan`, and `run` check template syntax in ENTRY, prompts, and control expressions before execution; they do not yet check reference availability or input declarations.
+`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context. (Behavior change from v0.1: ENTRY.md used to be passed through verbatim, so a literal `{{ ... }}` there must now be escaped as `\{{`.) Template errors name the file (or step, or `FLOW.json` expression) and line. Use `{{ input.audience }}`, rather than `{{ audience }}`. `validate`, `plan`, and `run` check template syntax in ENTRY, prompts, and control expressions before execution; they also reject unknown/forward step references, references between parallel siblings before their join, and branch-only outputs used after an IF. Checks conservatively cover every branch and the first loop iteration; even a currently fixed input gate does not make a branch-only output unconditional. LOOP exit expressions can read body results. Input declarations/required values are not statically checked because `--var` can supply them later. Previously these structural mistakes failed during execution; CLI commands now fail before creating a run or calling an executor. Direct `startRun` library callers retain runtime checks.
 
 Input and step-output values are inserted verbatim, including any `{{ ... }}` they contain. To write literal braces in template source, escape the opening delimiter: `\{{first_name}}` renders as `{{first_name}}`, and `$\{{ secrets.X }}` renders as `${{ secrets.X }}`. In JSON strings, write the backslash as `\\`. An unescaped unsupported or unclosed expression is an `INVALID_TEMPLATE` error.
 
