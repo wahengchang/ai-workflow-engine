@@ -40,11 +40,15 @@ try {
   const packed = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', temp]));
   assert.equal(packed.length, 1, 'npm pack should create exactly one tarball');
   const items = packed[0].files.map(f => f.path);
-  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'examples/content-generation/ENTRY.md']) {
+  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/dev-mode.md', 'src/dev.js', 'src/dev-store.js', 'src/outputs.js', 'examples/content-generation/ENTRY.md']) {
     assert.ok(items.includes(expected), `Missing from npm package: ${expected}`);
   }
   const excluded = items.filter(p => /(^|\/)(\.awe|\.git|node_modules|test|fixtures|\.github|scripts|\.agents)(\/|$)/.test(p) || /(^|\/)(\.env|\.npmrc)(\.|$)/.test(p));
   assert.deepEqual(excluded, [], `Unexpected development or sensitive files in npm package: ${excluded.join(', ')}`);
+  // Drafts and planning notes are not part of the product; only these docs ship.
+  const docs = items.filter(p => p.startsWith('docs/')).sort();
+  assert.deepEqual(docs, ['docs/dev-mode.md', 'docs/installation.md', 'docs/maintenance.md'], 'Unexpected documents in npm package');
+  assert.deepEqual(items.filter(p => /(^|\/)draf/i.test(p) || /\.(jsonl|log)$/.test(p) || /(^|\/)\.salt$/.test(p) || /session\.json$/.test(p)), [], 'Drafts or execution data in npm package');
 
   const prefix = path.join(temp, 'isolated');
   const tarball = path.join(temp, packed[0].filename);

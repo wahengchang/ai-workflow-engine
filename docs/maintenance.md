@@ -10,6 +10,7 @@ This policy defines how to keep the **CLI** and **Agent Skill** usable over time
 | npm metadata / package boundary | `package.json` | Run pack+offline-install test; update supported Node matrix |
 | Agent behavior | `.agents/skills/awe/SKILL.md` | Keep valid Agent Skills frontmatter; verify discoverability |
 | Workflow syntax | `src/discover.js`, `src/template.js`, `src/runtime.js` | Version semantics and add regression fixtures |
+| Dev mode and output files | `src/dev.js`, `src/dev-store.js`, `src/outputs.js`, `docs/dev-mode.md` | Keep `docs/dev-mode.md`, README, SKILL.md and `test/dev-*.test.js` in step; changing the fingerprint or session schema needs a migration note and a `SESSION_SCHEMA` bump |
 | Installation and upgrades | `docs/installation.md` | Separate tested, candidate and unpublished routes |
 | Long-term distribution policy | `docs/maintenance.md` | Update when versioning, support or release changes |
 | User-facing summary | `README.md` | Summarize and link rather than duplicating all procedures |
@@ -32,7 +33,7 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 - [ ] Tests for any CLI, packaging, Skill frontmatter or versioning behavior changes
 - [ ] README, `docs/installation.md` and SKILL.md updated together if CLI commands changed
 - [ ] Compatibility notes for existing `ENTRY.md`, `awe.json`, `FLOW.json` and numbered prompts
-- [ ] No new credentials, tokens, `.env`, `.awe/runs`, local files, or private content in the package
+- [ ] No new credentials, tokens, `.env`, `.awe/runs`, `.awe/dev`, drafts, local files, or private content in the package
 - [ ] Clear handling for deprecated options and previous installed versions
 - [ ] `npm run check` and `npm run test:distribution` green (plus GitHub CI)
 - [ ] Changes linked to a GitHub Issue; installation behavior verified before claiming support

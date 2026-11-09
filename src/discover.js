@@ -41,7 +41,27 @@ function validConfig(flow, relative) {
   }
 }
 
-export async function discoverWorkflow(root) {
+// Locations declared as step outputs (awe.json steps.<id>.outputs) hold generated files, not steps.
+// For each path, the first segment that is not step-shaped is skipped during discovery, so an
+// executor creating "out/report.pdf" never turns "out/" into an invalid step directory.
+// Lenient on purpose: malformed declarations are reported by preflight, not here.
+export function outputLocations(config) {
+  const skipped = new Set();
+  const steps = config?.steps && typeof config.steps === 'object' ? Object.values(config.steps) : [];
+  for (const spec of steps) {
+    for (const item of Array.isArray(spec?.outputs) ? spec.outputs : []) {
+      if (typeof item?.path !== 'string') continue;
+      let prefix = '';
+      for (const segment of path.posix.normalize(item.path).split('/')) {
+        prefix = prefix ? `${prefix}/${segment}` : segment;
+        if (!numbered.test(segment) && !stageDir.test(segment)) { skipped.add(prefix); break; }
+      }
+    }
+  }
+  return skipped;
+}
+
+export async function discoverWorkflow(root, { skip = new Set() } = {}) {
   const seen = new Set();
   const rootReal = await realpath(root);
   async function scan(dir, relative, enforceNumbered = true) {
@@ -70,6 +90,7 @@ export async function discoverWorkflow(root) {
       return { type: 'if', relative, config: flow, children };
     }
     sorted = sorted.filter(e => e.name !== 'ENTRY.md' && e.name !== 'awe.json' && e.name !== '.awe');
+    sorted = sorted.filter(e => !skip.has(path.join(relative, e.name).split(path.sep).join('/')));
     sorted = sorted.filter(e => {
       if (e.name.startsWith('.')) return false;
       if (e.isFile() && !e.name.endsWith('.md')) return false;

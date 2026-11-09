@@ -4,10 +4,19 @@ import { renderTemplate } from './template.js';
 import { executePrompt, getExecutionMode } from './executor.js';
 import { RunStore } from './storage.js';
 import { flatten } from './discover.js';
+import { declaredOutputs, snapshotOutputs, captureOutputs, simulatedFiles, filePaths } from './outputs.js';
+
+// Shared by awe run and awe dev so both build byte-identical prompts.
+export function buildPrompt(entry, source, context, node) {
+  const compiled = renderTemplate(source, context, node.relative);
+  const instructions = renderTemplate(entry.instructions, context, `ENTRY.md (while preparing step ${node.id})`);
+  return `# Workflow instructions (ENTRY.md)\n${instructions}\n\n# Step ${node.id} (${node.relative})\n${compiled}\n`;
+}
 
 export async function startRun(entry, tree, options = {}) {
   const executor = options.executor ?? entry.config.executor ?? { type: 'echo' };
   assertAwe(['echo', 'command'].includes(executor.type), 'INVALID_EXECUTOR', 'Unknown executor type');
+  const outputs = declaredOutputs(entry.config, tree);
   const store = new RunStore(entry.root);
   const state = {
     version: 1, runId: store.runId, workflow: entry.root, status: 'RUNNING',
@@ -17,7 +26,7 @@ export async function startRun(entry, tree, options = {}) {
     input: { ...(entry.config.input ?? {}), ...(options.input ?? {}) },
     steps: {}, events: [], error: null,
   };
-  const shared = { state, store, entry, signal: options.signal, executor: { ...executor, cwd: entry.root, signal: options.signal } };
+  const shared = { state, store, entry, outputs, signal: options.signal, executor: { ...executor, cwd: entry.root, signal: options.signal } };
   await store.initialize(state);
   const context = { input: state.input, steps: {} };
   try {
@@ -49,17 +58,20 @@ async function executePromptStep(node, context, shared) {
   await shared.store.save(shared.state);
   try {
     const source = await readFile(node.file, 'utf8');
-    const compiled = renderTemplate(source, context, node.relative);
-    const instructions = renderTemplate(shared.entry.instructions, context, `ENTRY.md (while preparing step ${id})`);
-    const prompt = `# Workflow instructions (ENTRY.md)\n${instructions}\n\n# Step ${id} (${node.relative})\n${compiled}\n`;
+    const prompt = buildPrompt(shared.entry, source, context, node);
     if (shared.entry.config.storePrompts === true) {
       shared.state.steps[id].prompt = await shared.store.prompt(id, attempt, prompt);
     }
+    const decls = shared.outputs.get(id) ?? [];
+    const simulated = shared.executor.type === 'echo';
+    const before = decls.length && !simulated ? await snapshotOutputs(shared.entry.root, decls) : null;
     const output = await executePrompt(prompt, shared.executor);
     assertAwe(typeof output === 'string', 'INVALID_RESULT', `Step ${id} produced invalid output`);
     const artifact = await shared.store.artifact(id, attempt, output);
-    context.steps[id] = { output, artifact };
-    shared.state.steps[id] = { ...shared.state.steps[id], status: 'COMPLETED', attempts: attempt, source: node.relative, artifact, outputPreview: output.slice(0, 200) };
+    const files = !decls.length ? undefined : simulated ? simulatedFiles(decls)
+      : await captureOutputs({ root: shared.entry.root, stepId: id, decls, before, destDir: shared.store.fileDir(id, attempt) });
+    context.steps[id] = { output, artifact, ...(files ? { files: filePaths(files) } : {}) };
+    shared.state.steps[id] = { ...shared.state.steps[id], status: 'COMPLETED', attempts: attempt, source: node.relative, artifact, outputPreview: output.slice(0, 200), ...(files ? { files } : {}) };
     event(shared, 'STEP_COMPLETED', node, { attempt, artifact });
     await shared.store.save(shared.state);
   } catch (error) {
@@ -126,7 +138,7 @@ async function executeGroup(node, context, shared) {
   throw new AweError('INVALID_FLOW', `Unsupported flow type ${node.type}`);
 }
 
-function gateValue(value, config, expected = false) {
+export function gateValue(value, config, expected = false) {
   // Preserve v0.1's exact expected value unless normalization is requested.
   let result = expected && config.match !== 'first-line' ? value : value.trim();
   if (config.match === 'first-line') {

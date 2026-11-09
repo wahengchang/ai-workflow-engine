@@ -23,9 +23,11 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 - `awe explain path/to/ENTRY.md --step 1.2` — inspect the selected step's source and config.
 - `awe run path/to/ENTRY.md --var topic="..."` — run with the configured executor; default is echo.
 - `awe run path/to/ENTRY.md --executor command --command <approved-agent-cli> --arg <argument>` — invoke a separately installed command-line AI executor. Verify its stdin/stdout contract before running it.
+- `awe dev path/to/ENTRY.md --step 1.50` — iterate on one step of a long workflow: reuse valid earlier dev results, run missing/stale prerequisites, execute that step, stop. `awe dev path/to/ENTRY.md` finishes the workflow from the cache. Dev results are separate from `awe run`; `--fresh` starts over. If AWE reports `UNKNOWN_EFFECT`, an earlier command was interrupted: tell the user what may have been affected and only rerun with `--acknowledge <address>` after they agree. See `docs/dev-mode.md`.
+- Steps may declare named output files (PDF, images) in `awe.json` under `steps.<id>.outputs`; later prompts reference the saved copy as `{{ steps["1.1"].files["name"] }}`.
 - From the workflow directory: `awe status <run-id>` and `awe inspect <run-id> --step 1.2`.
 
-AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a completed simulation produced content. Do not promise crash-time resume, publication, subjective quality guarantees, or auto-installation of AI dependencies.
+AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a completed simulation produced content. Do not promise crash-time resume or exactly-once command execution, publication, subjective quality guarantees, or auto-installation of AI dependencies.
 
 ## Maintenance
 

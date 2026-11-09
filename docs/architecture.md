@@ -42,3 +42,26 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 - **Only execute trusted workflows and binaries.** Prompts can instruct an external AI agent to call its own tools; AWE does not sandbox that agent.
 - Version 0.1 uses `FLOW.json` to avoid implementing a partial, ambiguous YAML parser. A future YAML adapter can be added without changing flow semantics.
 - No distributed workers, dynamic `goto`, auto-resume, cancellation API, credentials management, or transactional external side effects in v0.1.
+
+## Dev mode and output files (`awe dev`)
+
+Details and user rules: [dev-mode.md](dev-mode.md). Engineering contract:
+
+- **Reused, not forked.** `awe dev` walks the same AST (`discover.js`), gate logic (`gateValue`), prompt builder (`buildPrompt`),
+  executor, template renderer and `RunStore` as `awe run`. Only `src/dev.js` (walk, fingerprints, reuse) and `src/dev-store.js`
+  (session file, lock, intent/commit) are new; `src/outputs.js` holds named-file declaration, capture and verification.
+- **Identity.** An *address* (`<step>[@<loop>=<n>,...]`) names one occurrence of a step; an *attempt* is one execution of it. A result's
+  fingerprint covers the step's plan path, source, ENTRY, inputs, executor identity, declared outputs, control path (IF branch, LOOP
+  iteration plus a digest of the previous iteration, PARALLEL branch), the rendered prompt, and the `resultId`s of every earlier
+  step it could see (`precontext`: lower workflow order only, so never itself or later steps). Every execution gets a new `resultId`,
+  so a rerun invalidates dependents by cause, not by value.
+- **One session file** per input/executor combination, replaced atomically (temp file, fsync, rename), guarded by a per-session
+  lock file. Executor/input identity is stored as an HMAC keyed by a per-workspace salt, never as argv.
+- **Commit order:** intent (retires the previous result) → executor → artifact/files (exclusive create) → run state → atomic commit.
+  Leftover intents are *unknown outcomes* for command executors and require a per-address `--acknowledge`.
+- **Run isolation.** Dev runs are ordinary run directories with `mode: "dev"`; `awe run` neither reads `.awe/dev` nor writes dev
+  fields, and dev never reads results from a run.
+- **Output files.** Declared in `awe.json` `steps.<id>.outputs`, referenced as `steps[id].files[name]`, captured after success into
+  an attempt-specific directory and re-verified (size + SHA-256) on every reuse. Parallel overlaps are rejected in preflight.
+- **Test seam.** `cli(argv, cwd, { hooks })` accepts `afterIntent | afterExecute | afterArtifact | afterFiles | beforeCommit |
+  afterCommit` callbacks used by the crash tests; they are not a public API.

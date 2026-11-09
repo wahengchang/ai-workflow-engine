@@ -23,11 +23,16 @@ export class RunStore {
     });
     await this.pending;
   }
-  async artifact(stepId, attempt, content) {
+  async artifact(stepId, attempt, content, { exclusive = false } = {}) {
     const filename = `${stepId.replaceAll('.', '-')}-attempt-${attempt}.md`;
     const file = path.join(this.dir, 'artifacts', filename);
-    await writeFile(file, content, 'utf8');
+    // exclusive: never replace an earlier attempt's artifact.
+    await writeFile(file, content, { encoding: 'utf8', flag: exclusive ? 'wx' : 'w' });
     return file;
+  }
+  // Declared output files are copied into a directory that belongs to one attempt only.
+  fileDir(stepId, attempt) {
+    return path.join(this.dir, 'artifacts', 'files', stepId.replaceAll('.', '-'), `attempt-${attempt}`);
   }
   async prompt(stepId, attempt, content) {
     const file = path.join(this.dir, 'artifacts', `prompt-${stepId.replaceAll('.', '-')}-attempt-${attempt}.md`);
