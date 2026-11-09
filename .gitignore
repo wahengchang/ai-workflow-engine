@@ -7,4 +7,7 @@ node_modules/
 .agents/skills/ai-x
 .agents/skills/crew-x
 .agents/skills/grill-me
-draf*
+.agents/skills/draft-to-plan
+.agents/skills/draft-to-work
+.agents/skills/do-work
+draft*
