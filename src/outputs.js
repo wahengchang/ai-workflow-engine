@@ -81,6 +81,41 @@ function assertNoParallelConflicts(tree, outputs) {
   }
 }
 
+// Where a declared path really is on disk: resolve the deepest existing part (so an existing
+// symlinked directory such as alias -> out is followed) and append the not-yet-created rest.
+async function canonicalLocation(realRoot, relative) {
+  const parts = relative.split('/');
+  for (let count = parts.length; count > 0; count--) {
+    try { return path.join(await realpath(path.join(realRoot, ...parts.slice(0, count))), ...parts.slice(count)); }
+    catch (error) { if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error; }
+  }
+  return path.join(realRoot, ...parts);
+}
+
+// Run before any executor starts. Lexical comparison (above) cannot see that two different
+// spellings are the same file when a parent is a symlink, so compare real locations too.
+export async function assertOutputLocations(root, tree, outputs) {
+  if (!outputs.size) return;
+  const realRoot = await realpath(root);
+  const canonical = new Map();
+  for (const [step, decls] of outputs) {
+    for (const decl of decls) canonical.set(`${step}\0${decl.name}`, (await canonicalLocation(realRoot, decl.path)).split(path.sep).join('/'));
+  }
+  for (const node of flatten(tree)) {
+    if (node.type !== 'parallel') continue;
+    const branches = node.children.map(child => flatten(child).filter(n => n.type === 'prompt').flatMap(n => (outputs.get(n.id) ?? []).map(o => ({ step: n.id, path: o.path, real: canonical.get(`${n.id}\0${o.name}`) }))));
+    for (let i = 0; i < branches.length; i++) {
+      for (let j = i + 1; j < branches.length; j++) {
+        for (const a of branches[i]) {
+          for (const b of branches[j]) {
+            if (overlaps(a.real, b.real)) throw new AweError('OUTPUT_CONFLICT', `Parallel steps ${a.step} and ${b.step} declare outputs that are the same location on disk (${a.path} and ${b.path}, through a symlink); give each branch its own path`);
+          }
+        }
+      }
+    }
+  }
+}
+
 async function identity(file) {
   try {
     const s = await stat(file, { bigint: true });
@@ -128,6 +163,11 @@ export async function captureOutputs({ root, stepId, decls, before, destDir }) {
         throw error;
       }
       const relative = path.relative(realRoot, real);
+      // A symlinked location could alias another step's output, and an alias created while the
+      // executor runs cannot be caught beforehand. Declared outputs must be where they say they are.
+      if (real !== path.join(realRoot, ...decl.path.split('/'))) {
+        throw new AweError('OUTPUT_INVALID', `Declared output "${decl.name}" of step ${stepId} (${decl.path}) goes through a symlink (it resolves to ${relative.startsWith('..') ? 'a location outside the workflow' : relative}); declare the real location`);
+      }
       if (relative.startsWith('..') || path.isAbsolute(relative) || relative.split(path.sep)[0] === '.awe') {
         throw new AweError('OUTPUT_INVALID', `Declared output "${decl.name}" of step ${stepId} resolves outside the workflow root (${decl.path})`);
       }

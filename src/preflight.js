@@ -1,12 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { AweError } from './errors.js';
 import { templateReferences } from './template.js';
-import { declaredOutputs } from './outputs.js';
+import { assertOutputLocations, declaredOutputs } from './outputs.js';
 
 // Model the first iteration and all possible branches, without executing a gate.
 export async function validateReferences(entry, tree) {
   // Also validates the awe.json output declarations (including parallel path conflicts).
   const outputs = declaredOutputs(entry.config, tree);
+  await assertOutputLocations(entry.root, tree, outputs);
   function check(source, available, label) {
     for (const reference of templateReferences(source, label)) {
       if (reference.stepId && !available.has(reference.stepId)) {

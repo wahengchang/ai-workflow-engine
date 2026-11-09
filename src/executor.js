@@ -66,9 +66,14 @@ export async function executePrompt(prompt, options) {
     child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => { stdout += chunk; });
     child.stderr.on('data', chunk => { stderr += chunk; });
-    child.on('close', code => {
+    child.on('close', (code, signal) => {
       if (code === 0) finish(null, stdout.trimEnd());
-      else finish(new AweError('EXECUTOR_FAILED', `Command exited ${code}: ${redactArguments(stderr.trim(), options.argv).slice(0, 1000)}`));
+      else if (signal) {
+        // Killed from outside AWE (OOM killer, kill -9, ...): it may have acted before dying.
+        const error = new AweError('EXECUTOR_FAILED', `Command was terminated by signal ${signal}: ${redactArguments(stderr.trim(), options.argv).slice(0, 1000)}`);
+        error.signal = signal;
+        finish(error);
+      } else finish(new AweError('EXECUTOR_FAILED', `Command exited ${code}: ${redactArguments(stderr.trim(), options.argv).slice(0, 1000)}`));
     });
     child.stdin.on('error', () => {}); // e.g. command exits before consuming stdin
     child.stdin.end(prompt);

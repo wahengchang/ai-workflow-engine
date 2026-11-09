@@ -7,6 +7,8 @@
 //   PASS_IF_NUM_GTE::k::t   reply PASS when the last integer in t is >= k, else FAIL
 //   FAIL_IF_EXISTS::file    exit 3 while the workspace file exists
 //   SYMLINK::path::target   make a workspace symlink (replacing any file)
+//   APPEND::file::text      append a line to a workspace file (an external effect)
+//   SELF_KILL::             die from SIGKILL after the effects above, as an OOM kill would
 //   SLEEP::ms               wait before replying
 //   SLEEP_WHILE::file::ms   wait only while the workspace file exists
 const fs = require('node:fs');
@@ -41,6 +43,8 @@ process.stdin.on('end', async () => {
     fs.mkdirSync(path.dirname(path.join(process.cwd(), match[1])), { recursive: true });
     fs.writeFileSync(path.join(process.cwd(), match[1]), Buffer.from(match[2], 'hex'));
   }
+  for (const match of input.matchAll(/APPEND::([^:\n]+)::([^\n]*)/g)) fs.appendFileSync(path.join(process.cwd(), match[1]), `${fill(match[2])}\n`);
+  if (/SELF_KILL::/.test(input)) process.kill(process.pid, 'SIGKILL');
   for (const match of input.matchAll(/SYMLINK::([^:\n]+)::([^\n]*)/g)) {
     fs.mkdirSync(path.dirname(path.join(process.cwd(), match[1])), { recursive: true });
     fs.rmSync(path.join(process.cwd(), match[1]), { force: true });

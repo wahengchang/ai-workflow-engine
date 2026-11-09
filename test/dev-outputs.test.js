@@ -217,3 +217,61 @@ test('simulate and run support declared outputs', async t => {
   assert.equal(await readFile(prod.steps['1.1'].files.report.path, 'utf8'), '%PDF-1.4 fake');
   assert.ok((await calls(ws.log)).find(c => c.step === '1.2').prompt.includes(prod.steps['1.1'].files.report.path));
 });
+
+const gate = { '1.1-judge.md': 'OUTPUT::PASS' };
+const ifGroup = { '1.2-if/FLOW.json': flow({ type: 'if', test: '{{ steps["1.1"].output }}', equals: 'PASS', then: 'yes', else: 'no' }), '1.2-if/no/1.2.2-other.md': 'OUTPUT::other' };
+
+test('generated files never become workflow structure, on the first or the second command', async t => {
+  const cases = {
+    'a declared file that is named like a step': {
+      files: { '1.1-make.md': 'WRITE::1.2-generated.md::# I am not a prompt\nOUTPUT::made' },
+      config: declare('1.1', { name: 'doc', path: '1.2-generated.md' }),
+      steps: ['1.1'],
+    },
+    'a generated folder directly inside an IF group': {
+      files: { ...gate, ...ifGroup, '1.2-if/yes/1.2.1-make.md': 'WRITE::1.2-if/out/report.txt::r\nOUTPUT::made' },
+      config: declare('1.2.1', { name: 'r', path: '1.2-if/out/report.txt' }),
+      steps: ['1.1', '1.2.1'],
+    },
+    'a generated tree inside an IF branch': {
+      files: { ...gate, ...ifGroup, '1.2-if/yes/1.2.1-make.md': 'WRITE::1.2-if/yes/out/generated/report.txt::r\nOUTPUT::made' },
+      config: declare('1.2.1', { name: 'r', path: '1.2-if/yes/out/generated/report.txt' }),
+      steps: ['1.1', '1.2.1'],
+    },
+  };
+  for (const [name, { files, config, steps }] of Object.entries(cases)) {
+    const ws = await workspace(t, files, config);
+    const first = await dev(ws);
+    assert.equal(first.status, 'COMPLETED', `${name}: ${JSON.stringify(first.error)}`);
+    const second = await dev(ws);
+    assert.equal(second.status, 'COMPLETED', `${name}: ${JSON.stringify(second.error)}`);
+    assert.deepEqual([second.dev.executed, second.dev.reused], [0, steps.length], name);
+    assert.deepEqual(Object.keys(second.steps), steps, `${name}: only real steps exist`);
+    assert.match((await validate(ws)).output, /VALID/);
+  }
+});
+
+const aliasable = process.platform === 'win32' ? { skip: 'symlinks need privileges' } : {};
+const fan = { '1.1-fan/FLOW.json': flow({ type: 'parallel' }), '1.1-fan/1.1.1-a.md': 'SLEEP::300\nWRITE::out/report.txt::A\nOUTPUT::a', '1.1-fan/1.1.2-b.md': 'WRITE::alias/report.txt::B\nOUTPUT::b' };
+const aliasConfig = { steps: { '1.1.1': { outputs: [{ name: 'f', path: 'out/report.txt' }] }, '1.1.2': { outputs: [{ name: 'g', path: 'alias/report.txt' }] } } };
+
+test('parallel outputs that are the same file through a symlink are a conflict before anything runs', aliasable, async t => {
+  const ws = await workspace(t, fan, aliasConfig);
+  await mkdir(path.join(ws.dir, 'out'));
+  await symlink('out', path.join(ws.dir, 'alias'), 'dir');
+  await assert.rejects(validate(ws), error => error.code === 'OUTPUT_CONFLICT' && /same location on disk/.test(error.message));
+  await assert.rejects(dev(ws), { code: 'OUTPUT_CONFLICT' });
+  await assert.rejects(cli(['run', ws.dir, ...agentArgs(ws.log)], ws.dir), { code: 'OUTPUT_CONFLICT' });
+  assert.deepEqual(await countByStep(ws.log), {}, 'neither executor started');
+});
+
+test('an output location that goes through a symlink is refused at capture, including aliases made while running', aliasable, async t => {
+  const ws = await workspace(t, {
+    '1.1-make.md': 'SYMLINK::alias::.real\nWRITE::.real/report.txt::A\nOUTPUT::made',
+  }, declare('1.1', { name: 'f', path: 'alias/report.txt' }));
+  await mkdir(path.join(ws.dir, '.real'));
+  const state = await dev(ws);
+  assert.equal(state.status, 'FAILED');
+  assert.equal(state.error.code, 'OUTPUT_INVALID');
+  assert.match(state.error.message, /goes through a symlink/);
+});

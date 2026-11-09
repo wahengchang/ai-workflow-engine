@@ -8,7 +8,7 @@ import { executePrompt, getExecutionMode } from './executor.js';
 import { RunStore } from './storage.js';
 import { buildPrompt, gateValue } from './runtime.js';
 import { digestOf, secretDigest, sha256 } from './digest.js';
-import { declaredOutputs, snapshotOutputs, captureOutputs, simulatedFiles, filePaths, verifyStoredFile } from './outputs.js';
+import { assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs, simulatedFiles, filePaths, verifyStoredFile } from './outputs.js';
 import { openSession, workspaceSalt } from './dev-store.js';
 
 const FINGERPRINT_VERSION = 1;
@@ -89,6 +89,7 @@ export async function startDev(entry, tree, options = {}) {
   const executor = options.executor ?? entry.config.executor ?? { type: 'echo' };
   assertAwe(['echo', 'command'].includes(executor.type), 'INVALID_EXECUTOR', 'Unknown executor type');
   const outputs = declaredOutputs(entry.config, tree);
+  await assertOutputLocations(entry.root, tree, outputs);
   const info = indexTree(tree);
 
   let targetNode = null;
@@ -429,7 +430,7 @@ async function walkPrompt(node, context, sh, scope) {
   } catch (error) {
     const interrupted = error.code === 'RUN_INTERRUPTED';
     // After a kill or timeout the command may have done anything; a plain non-zero exit is a known failure.
-    const unknownEffect = sh.executor.type === 'command' && phase === 'execute' && (interrupted || error.code === 'EXECUTOR_TIMEOUT');
+    const unknownEffect = sh.executor.type === 'command' && phase === 'execute' && (interrupted || error.code === 'EXECUTOR_TIMEOUT' || Boolean(error.signal));
     Object.assign(entryState, { status: interrupted ? 'INTERRUPTED' : 'FAILED', finishedAt: new Date().toISOString(), error: { code: error.code ?? 'UNEXPECTED', message: error.message } });
     state.steps[id] = { ...state.steps[id], status: interrupted ? 'INTERRUPTED' : 'FAILED', error: entryState.error };
     event(sh, interrupted ? 'STEP_INTERRUPTED' : 'STEP_FAILED', node, { address, attempt, code: error.code ?? 'UNEXPECTED', message: error.message });

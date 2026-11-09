@@ -139,10 +139,13 @@ How it works:
 Validation (`validate`, `plan`, `run`, `simulate`, `dev`) happens before any executor starts: paths must be relative,
 forward-slash, inside the workflow and outside `.awe`; names must be unique per step; every `files[...]` reference must
 name a declared output of a step that is guaranteed to have run. **Parallel steps may not declare the same location**
-(or one inside another's): `OUTPUT_CONFLICT`.
+(or one inside another's): `OUTPUT_CONFLICT`. This is checked on real locations as well, so `out/report.txt` and
+`alias/report.txt` conflict when `alias` is a symlink to `out`. Because aliases can also appear while an executor runs, a
+declared output may not go through a symlink at all: capture fails with `OUTPUT_INVALID`, so declare the real path.
 
-Declared locations are skipped during step discovery, so a generated `out/` folder or `notes.md` never counts as a
-malformed step. Declared outputs also work with `awe run`. With the `echo` executor (including `simulate`) no file can be
+During step discovery AWE skips each declared output file (whatever its name, even `1.2-generated.md`) and the generated
+directories leading to it, so a generated `out/` folder or `notes.md` never counts as a step or a malformed step. Real
+structure is kept: numbered step/stage directories and the branch directories of an IF group. Declared outputs also work with `awe run`. With the `echo` executor (including `simulate`) no file can be
 produced, so `files[...]` renders `[simulated file: name]` and the run is labelled `SIMULATED`.
 
 ## Interruptions, crashes and unknown outcomes
@@ -160,7 +163,7 @@ with `DEV_SESSION_BUSY` (use `--fresh` for an independent session). The lock of 
 automatically.
 
 If a command is stopped after the executor may have started but before its result was committed (Ctrl-C, timeout,
-`SIGKILL`, power loss), the effects of an external command are **unknown**. AWE never resends such a command by itself,
+a signal from outside AWE such as the OOM killer or `kill -9`, a crash or power loss of AWE itself), the effects of an external command are **unknown**. AWE never resends such a command by itself,
 and it does not claim exactly-once execution. The next `awe dev` stops with `UNKNOWN_EFFECT` and prints the address to
 acknowledge once you have checked what the command may have changed:
 
@@ -169,7 +172,7 @@ awe dev . --acknowledge 1.2
 ```
 
 The acknowledgement allows that one invocation to run once. A plain non-zero exit is a known failure and needs no
-acknowledgement. With the `echo` executor nothing can have happened, so an orphaned attempt is just run again. A run
+acknowledgement; a command terminated by a signal is not (its error says `terminated by signal ...`). With the `echo` executor nothing can have happened, so an orphaned attempt is just run again. A run
 that a crash left with an unfinished attempt is marked `FAILED` (`RUN_ABANDONED`) the next time that session is opened.
 
 ## What is stored
@@ -216,5 +219,5 @@ artifacts still contain inputs and outputs, as before; protect the whole `.awe` 
 | `TARGET_UNREACHABLE` | the gate or loop never reaches that step/occurrence; it was not executed |
 | `UNKNOWN_EFFECT` / `ACKNOWLEDGE_UNKNOWN` | see [recovery](#interruptions-crashes-and-unknown-outcomes) |
 | `DEV_SESSION_BUSY` | another `awe dev` holds this session |
-| `OUTPUT_MISSING`, `OUTPUT_STALE`, `OUTPUT_INVALID` | a declared file was not produced, was not written by this attempt, or is not a regular file inside the workflow |
-| `OUTPUT_CONFLICT` | parallel steps declare overlapping output locations |
+| `OUTPUT_MISSING`, `OUTPUT_STALE`, `OUTPUT_INVALID` | a declared file was not produced, was not written by this attempt, or is not a regular file at its real location inside the workflow |
+| `OUTPUT_CONFLICT` | parallel steps declare overlapping output locations (including through symlinks) |

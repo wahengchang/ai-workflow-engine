@@ -261,3 +261,22 @@ test('argv, credentials and prompts are not written into the dev cache', async t
   assert.deepEqual(hits, ['prompt-1-1-attempt-1.md'], 'only the opt-in prompt file holds the prompt, never the session cache');
   assert.ok(stored.steps['1.1'].prompt.endsWith('prompt-1-1-attempt-1.md'));
 });
+
+test('a command killed from outside AWE (OOM, kill -9) after acting is an unknown outcome, not a plain failure', posix, async t => {
+  const ws = await workspace(t, { '1.1-act.md': 'APPEND::effects.log::effect\nSELF_KILL::' });
+  const effects = async () => (await readFile(path.join(ws.dir, 'effects.log'), 'utf8')).trim().split('\n').length;
+  const first = await dev(ws);
+  assert.equal(first.error.code, 'EXECUTOR_FAILED');
+  assert.match(first.error.message, /terminated by signal SIGKILL/);
+  assert.equal(await effects(), 1);
+
+  const second = await dev(ws);
+  assert.equal(second.error.code, 'UNKNOWN_EFFECT', 'the second command must not resend it');
+  assert.match(second.error.message, /--acknowledge 1\.1/);
+  assert.equal(await effects(), 1, 'the executor did not start again');
+
+  const third = await dev(ws, ['--acknowledge', '1.1']);
+  assert.equal(third.error.code, 'EXECUTOR_FAILED');
+  assert.equal(await effects(), 2, 'only the acknowledged retry ran');
+  assert.equal((await dev(ws)).error.code, 'UNKNOWN_EFFECT', 'and it is unknown again');
+});

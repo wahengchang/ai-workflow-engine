@@ -41,27 +41,21 @@ function validConfig(flow, relative) {
   }
 }
 
-// Locations declared as step outputs (awe.json steps.<id>.outputs) hold generated files, not steps.
-// For each path, the first segment that is not step-shaped is skipped during discovery, so an
-// executor creating "out/report.pdf" never turns "out/" into an invalid step directory.
-// Lenient on purpose: malformed declarations are reported by preflight, not here.
+// Declared output paths (awe.json steps.<id>.outputs) as normalized posix paths. Discovery must
+// not mistake what an executor generates there for workflow structure. Lenient on purpose:
+// malformed declarations are reported by preflight, not here.
 export function outputLocations(config) {
-  const skipped = new Set();
+  const declared = [];
   const steps = config?.steps && typeof config.steps === 'object' ? Object.values(config.steps) : [];
   for (const spec of steps) {
     for (const item of Array.isArray(spec?.outputs) ? spec.outputs : []) {
-      if (typeof item?.path !== 'string') continue;
-      let prefix = '';
-      for (const segment of path.posix.normalize(item.path).split('/')) {
-        prefix = prefix ? `${prefix}/${segment}` : segment;
-        if (!numbered.test(segment) && !stageDir.test(segment)) { skipped.add(prefix); break; }
-      }
+      if (typeof item?.path === 'string') declared.push(path.posix.normalize(item.path));
     }
   }
-  return skipped;
+  return declared;
 }
 
-export async function discoverWorkflow(root, { skip = new Set() } = {}) {
+export async function discoverWorkflow(root, { outputs = [] } = {}) {
   const seen = new Set();
   const rootReal = await realpath(root);
   async function scan(dir, relative, enforceNumbered = true) {
@@ -76,6 +70,16 @@ export async function discoverWorkflow(root, { skip = new Set() } = {}) {
     }
     const children = [];
     let sorted = entries.filter(e => e.isFile() || e.isDirectory()).filter(e => e.name !== 'FLOW.json');
+    // Generated files are not workflow structure. Skip (1) a declared output file itself, whatever
+    // it is called, and (2) a directory on the way to one unless it is real structure: a numbered
+    // step/stage directory or a branch of this IF. This runs before any IF validation below.
+    const branchNames = flow.type === 'if' ? [flow.then, flow.else] : [];
+    sorted = sorted.filter(e => {
+      const location = path.join(relative, e.name).split(path.sep).join('/');
+      if (outputs.includes(location)) return false;
+      if (!e.isDirectory() || !outputs.some(declared => declared.startsWith(`${location}/`))) return true;
+      return numbered.test(e.name) || stageDir.test(e.name) || branchNames.includes(e.name);
+    });
     if (flow.type === 'if') {
       const branches = [flow.then, flow.else];
       assertAwe(branches[0] !== branches[1], 'INVALID_FLOW', `IF branches must be distinct at ${relative}`);
@@ -90,7 +94,6 @@ export async function discoverWorkflow(root, { skip = new Set() } = {}) {
       return { type: 'if', relative, config: flow, children };
     }
     sorted = sorted.filter(e => e.name !== 'ENTRY.md' && e.name !== 'awe.json' && e.name !== '.awe');
-    sorted = sorted.filter(e => !skip.has(path.join(relative, e.name).split(path.sep).join('/')));
     sorted = sorted.filter(e => {
       if (e.name.startsWith('.')) return false;
       if (e.isFile() && !e.name.endsWith('.md')) return false;

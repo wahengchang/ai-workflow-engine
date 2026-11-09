@@ -4,7 +4,7 @@ import { renderTemplate } from './template.js';
 import { executePrompt, getExecutionMode } from './executor.js';
 import { RunStore } from './storage.js';
 import { flatten } from './discover.js';
-import { declaredOutputs, snapshotOutputs, captureOutputs, simulatedFiles, filePaths } from './outputs.js';
+import { assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs, simulatedFiles, filePaths } from './outputs.js';
 
 // Shared by awe run and awe dev so both build byte-identical prompts.
 export function buildPrompt(entry, source, context, node) {
@@ -17,6 +17,7 @@ export async function startRun(entry, tree, options = {}) {
   const executor = options.executor ?? entry.config.executor ?? { type: 'echo' };
   assertAwe(['echo', 'command'].includes(executor.type), 'INVALID_EXECUTOR', 'Unknown executor type');
   const outputs = declaredOutputs(entry.config, tree);
+  await assertOutputLocations(entry.root, tree, outputs);
   const store = new RunStore(entry.root);
   const state = {
     version: 1, runId: store.runId, workflow: entry.root, status: 'RUNNING',

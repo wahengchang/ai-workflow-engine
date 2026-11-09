@@ -104,7 +104,7 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
   }
   if (!['validate', 'plan', 'run', 'simulate', 'explain', 'dev'].includes(command)) throw new AweError('CLI_USAGE', `Unknown command: ${command}\n${HELP}`);
   const entry = await loadEntry(path.resolve(cwd, target));
-  const tree = await discoverWorkflow(entry.root, { skip: outputLocations(entry.config) });
+  const tree = await discoverWorkflow(entry.root, { outputs: outputLocations(entry.config) });
   // Check author-written syntax before any executor (and any paid calls) runs.
   validateTemplate(entry.instructions, path.relative(cwd, entry.entryFile) || 'ENTRY.md');
   for (const node of flatten(tree)) {
