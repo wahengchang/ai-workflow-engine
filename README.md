@@ -63,6 +63,22 @@ New run states store `executionMode: "SIMULATED"` for echo or `"COMMAND"` for an
 
 Compatibility: `awe run` still respects CLI/configured executors and defaults to echo only when none is configured. Explicit `--executor echo` is also labeled `SIMULATED`. Existing status values (`COMPLETED`, `FAILED`, `INTERRUPTED`) and exit codes remain unchanged; execution mode is separate from success/failure. Text `status` infers the mode of older runs from their recorded executor, or shows `UNKNOWN` if it was not recorded, without rewriting their state.
 
+### Dev mode: test one step of a long workflow
+
+`awe dev` runs only what you are working on and reuses valid earlier results from previous dev commands:
+
+```sh
+awe dev my-workflow --step 1.50     # first time: runs 1.1-1.49, then 1.50, then stops
+awe dev my-workflow --step 1.50     # after editing 1.50's prompt: 1.1-1.49 reused, only 1.50 runs
+awe dev my-workflow                 # finish the workflow: 1.1-1.50 reused, 1.51 onward runs
+```
+
+It keeps sequence/IF/LOOP/PARALLEL semantics, invalidates only what a change can affect, never silently falls back to an
+older success after a failed rerun, and never shares results with `awe run`. Steps can also declare **named output files**
+(PDF, images, ...) in `awe.json`; AWE saves an immutable per-attempt copy and templates reference it as
+`{{ steps["1.1"].files["report"] }}`. See [docs/dev-mode.md](docs/dev-mode.md) for the rules, recovery behavior
+(`--acknowledge` for commands whose outcome is unknown), storage layout and limits.
+
 ## Workflow convention
 
 ```text
@@ -125,6 +141,7 @@ On an IF, `"elseEquals": "FAIL"` makes the gate strict: output matching neither 
 Research the topic: {{ input.topic }}
 Use the prior result: {{ steps["1.1"].output }}
 Or reference its file: {{ steps["1.1"].artifact }}
+Or a declared output file: {{ steps["1.1"].files["report"] }}
 ```
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored). No implicit cross-step model memory; state moves through declared values and artifact paths.
@@ -188,6 +205,7 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 | `awe explain PATH --step 1.2` | Display a step's source and configuration |
 | `awe simulate PATH [--var key=value] [--json]` | Use echo only; save rendered prompts and label the run SIMULATED |
 | `awe run PATH ... [--json]` | Use the selected/configured executor; save artifacts and event trace |
+| `awe dev PATH [--step ID [--invocation LOOP=N,...]] [--fresh] [--acknowledge ADDRESS] ...` | Partial execution with reuse of valid dev results; [details](docs/dev-mode.md) |
 | `awe status RUN_ID` | Summarize stored run status |
 | `awe inspect RUN_ID --step 1.2` | Inspect step state (without `--step`, full run trace) |
 
@@ -201,4 +219,4 @@ npm run check
 npm run test:distribution
 ```
 
-See [architecture](docs/architecture.md) and [implementation plan](docs/plan.md). Key limitations: no crash-time `resume`, no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.
+See [architecture](docs/architecture.md), [dev mode](docs/dev-mode.md) and [implementation plan](docs/plan.md). Key limitations: no crash-time `resume` of `awe run` (dev mode retries explicitly, never exactly-once), no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.

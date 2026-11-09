@@ -1,13 +1,20 @@
 import { readFile } from 'node:fs/promises';
 import { AweError } from './errors.js';
 import { templateReferences } from './template.js';
+import { assertOutputLocations, declaredOutputs } from './outputs.js';
 
 // Model the first iteration and all possible branches, without executing a gate.
 export async function validateReferences(entry, tree) {
+  // Also validates the awe.json output declarations (including parallel path conflicts).
+  const outputs = declaredOutputs(entry.config, tree);
+  await assertOutputLocations(entry.root, tree, outputs);
   function check(source, available, label) {
     for (const reference of templateReferences(source, label)) {
       if (reference.stepId && !available.has(reference.stepId)) {
         throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} is not guaranteed to be available here (unknown, forward, parallel sibling, or conditional reference)`);
+      }
+      if (reference.fileName && !outputs.get(reference.stepId)?.some(output => output.name === reference.fileName)) {
+        throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} does not declare an output file named "${reference.fileName}" in awe.json`);
       }
     }
   }
