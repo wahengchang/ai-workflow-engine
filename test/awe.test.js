@@ -10,7 +10,7 @@ import { renderTemplate } from '../src/template.js';
 import { startRun } from '../src/runtime.js';
 import { cli } from '../src/cli.js';
 
-const fakeAgent = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'fixtures', 'fake-agent.cjs');
+const fakeAgent = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'fake-agent.cjs');
 const executor = { type: 'command', argv: [process.execPath, fakeAgent], timeoutMs: 3000 };
 
 async function fixture(t, files) {

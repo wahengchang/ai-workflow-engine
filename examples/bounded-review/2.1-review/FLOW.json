@@ -1,0 +1,6 @@
+{
+  "type": "loop",
+  "until": "{{ steps[\"2.1.1\"].output }}",
+  "equals": "PASS",
+  "maxIterations": 3
+}

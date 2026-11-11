@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "executor": {
+    "type": "command",
+    "argv": ["node", "../executors/reply.cjs", "--pass-on=3"],
+    "timeoutMs": 120000
+  }
+}

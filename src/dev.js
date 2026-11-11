@@ -17,19 +17,22 @@ const FINGERPRINT_VERSION = 1;
 // A step ID names the prompt; an *occurrence* names which pass through enclosing LOOPs
 // it belongs to; an *attempt* is one execution of an occurrence. Cache slots are per
 // occurrence ("1.2" or "1.2@stage-2/2.1-loop=3"); attempts only ever accumulate.
-export const loopKey = loops => loops.map(loop => `${loop.rel}=${loop.iter}`).join(',');
+export const loopKey = loops => loops.map(loop => `${loop.rel.split(path.sep).join('/')}=${loop.iter}`).join(',');
 export const addressOf = (stepId, loops) => (loops.length ? `${stepId}@${loopKey(loops)}` : stepId);
 
 const escapeRegExp = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const posix = value => value.split(path.sep).join('/');
 
 function parseInvocation(text, loopNodes, stepId) {
-  const pattern = new RegExp(`^${loopNodes.map(loop => `${escapeRegExp(loop.relative)}=(\\d+)`).join(',')}$`);
-  const match = pattern.exec(text);
-  const format = loopNodes.map(loop => `${loop.relative}=<1-${loop.config.maxIterations}>`).join(',');
+  // Workflow-relative addresses are documented with forward slashes on every OS.
+  const input = text.replaceAll('\\', '/');
+  const pattern = new RegExp(`^${loopNodes.map(loop => `${escapeRegExp(posix(loop.relative))}=(\\d+)`).join(',')}$`);
+  const match = pattern.exec(input);
+  const format = loopNodes.map(loop => `${posix(loop.relative)}=<1-${loop.config.maxIterations}>`).join(',');
   if (!match) throw new AweError('INVOCATION_INVALID', `Invalid --invocation "${text}" for step ${stepId}. Expected: ${format}`);
   return loopNodes.map((loop, index) => {
     const iter = Number(match[index + 1]);
-    assertAwe(iter >= 1 && iter <= loop.config.maxIterations, 'INVOCATION_INVALID', `Iteration ${iter} is outside 1-${loop.config.maxIterations} for loop ${loop.relative}`);
+    assertAwe(iter >= 1 && iter <= loop.config.maxIterations, 'INVOCATION_INVALID', `Iteration ${iter} is outside 1-${loop.config.maxIterations} for loop ${posix(loop.relative)}`);
     return { rel: loop.relative, iter };
   });
 }
@@ -48,7 +51,7 @@ function resolveInvocation(target, option, session) {
   }
   if (option !== undefined) return parseInvocation(option, loopNodes, stepId);
   const known = knownOccurrences(session, stepId);
-  const format = loopNodes.map(loop => `${loop.relative}=<1-${loop.config.maxIterations}>`).join(',');
+  const format = loopNodes.map(loop => `${posix(loop.relative)}=<1-${loop.config.maxIterations}>`).join(',');
   if (known.length > 1) {
     throw new AweError('INVOCATION_REQUIRED', `Step ${stepId} runs inside a LOOP and has several occurrences. Pass --invocation <${format}>. Known occurrences:\n  ${known.sort().join('\n  ')}`);
   }

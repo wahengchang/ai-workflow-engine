@@ -35,6 +35,10 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 
 `awe` CLI → Entry Loader → Directory Resolver → Flow Controller → Prompt Executor → RunStore. `awe explain` shows resolved location/configuration; `awe status` and `awe inspect` expose state and events.
 
+## Partial rerun
+
+`awe run PATH --from ID --reuse RUN_ID` executes an exact atomic suffix of a previous run of the same workflow: each prompt is one unit and each IF/LOOP/PARALLEL group is one atomic unit; sequence folders stay transparent and numbered sequence group ids are alias for their first executed step. New runs record additive `fingerprints` (topology, ENTRY bytes, resolved input, prompt/FLOW hashes, per-completed-step artifact hashes and declared-output-file hashes) plus `parentRunId`/`from`/`reusedSteps`; reused steps carry `reused: true`, `originRunId` and artifact and output-file copies created inside the new run. Verification is read-only until the new run directory is created: workflow identity (realpath), run-ID identity, terminal status allowlist (COMPLETED/FAILED/INTERRUPTED; FAILED/INTERRUPTED only when each required upstream unit completed), fingerprint completeness, resolved-cut validity, topology/ENTRY/input-defaults/upstream-prompt/upstream-FLOW equality, suffix-reference visibility (IF contributes only its chosen branch; PARALLEL joins; LOOP final completed iteration only), artifact and output-file existence/containment/hash, and execution-mode equality. Input defaults are snapshotted separately (`inputSource.defaults`/`vars`) so defaults drift is detectable while source `--var` values carry over verbatim.
+
 ## Security and compatibility
 
 - The engine does not follow symlinked workflow entries during discovery.

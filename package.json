@@ -10,8 +10,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
-    "check": "node --check bin/awe.js && node --check src/cli.js && node --check src/runtime.js && node --check src/discover.js && node --check src/dev.js && node --check src/dev-store.js && node --check src/outputs.js && npm test",
+    "test": "node --test test/awe.test.js test/dev-outputs.test.js test/dev-partial.test.js test/dev-recovery.test.js test/error-redaction.test.js test/examples.test.js test/init.test.js test/partial.test.js test/preflight.test.js test/regressions.test.js test/simulate.test.js",
+    "check": "node --check bin/awe.js && node --check src/cli.js && node --check src/entry.js && node --check src/errors.js && node --check src/executor.js && node --check src/init.js && node --check src/preflight.js && node --check src/partial.js && node --check src/runtime.js && node --check src/storage.js && node --check src/template.js && node --check src/discover.js && node --check src/dev.js && node --check src/dev-store.js && node --check src/digest.js && node --check src/outputs.js && npm test",
     "test:distribution": "node scripts/check-distribution.mjs"
   },
   "license": "UNLICENSED",
@@ -27,7 +27,13 @@
     "bin/",
     "src/",
     "examples/content-generation/",
+    "examples/content-generation/",
     "docs/dev-mode.md",
+    "docs/tutorial.md",
+    "examples/request-routing/",
+    "examples/bounded-review/",
+    "examples/executors/",
+    "examples/README.md",
     "docs/installation.md",
     "docs/maintenance.md",
     "README.md"

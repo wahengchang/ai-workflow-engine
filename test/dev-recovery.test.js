@@ -5,11 +5,11 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { workspace, put, dev, calls, countByStep, agentArgs, projectRoot, flow } from '../fixtures/dev-helpers.mjs';
+import { workspace, put, dev, calls, countByStep, agentArgs, projectRoot, flow } from './fixtures/dev-helpers.mjs';
 import { cli } from '../src/cli.js';
 
 const bin = path.join(projectRoot, 'bin', 'awe.js');
-const crashScript = path.join(projectRoot, 'fixtures', 'dev-crash.mjs');
+const crashScript = path.join(projectRoot, 'test', 'fixtures', 'dev-crash.mjs');
 // These tests send real POSIX signals to a child awe process; Windows has no equivalent.
 const posix = { skip: process.platform === 'win32' && 'needs POSIX signals' };
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdir, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { workspace, put, dev, calls, countByStep, flow, agentArgs } from '../fixtures/dev-helpers.mjs';
+import { workspace, put, dev, calls, countByStep, flow, agentArgs } from './fixtures/dev-helpers.mjs';
 import { cli } from '../src/cli.js';
 
 const PDF_HEX = Buffer.from('%PDF-1.4 fake').toString('hex');

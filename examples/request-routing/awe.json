@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "executor": {
+    "type": "command",
+    "argv": ["node", "../executors/reply.cjs", "--say=APPROVED"],
+    "timeoutMs": 120000
+  }
+}
