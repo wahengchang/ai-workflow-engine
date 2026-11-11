@@ -91,7 +91,7 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       validConfig(flow, relative || '.');
     }
     const children = [];
-    if (relative && entries.some(e => e.name === 'ENTRY.md' && e.isFile())) ignoredEntries.push(path.join(relative, 'ENTRY.md'));
+    if (relative) for (const name of ['awe.json', 'ENTRY.md']) if (entries.some(e => e.name === name && e.isFile())) ignoredEntries.push(path.join(relative, name));
     let sorted = entries.filter(e => e.isFile() || e.isDirectory()).filter(e => e.name !== 'FLOW.json');
     // Generated files are not workflow structure. Skip (1) a declared output file itself, whatever
     // it is called, and (2) a directory on the way to one unless it is real structure: a numbered
@@ -147,8 +147,8 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
     return { type: flow.type, relative, config: flow, children };
   }
   const tree = await scan(rootReal, '');
-  assertAwe(tree.children.length > 0, 'EMPTY_WORKFLOW', 'No numbered steps found under ENTRY.md');
-  // Only the ENTRY.md at the workflow root is used. Report the others instead of ignoring them silently.
+  assertAwe(tree.children.length > 0, 'EMPTY_WORKFLOW', 'No numbered steps found in this workflow folder');
+  // Only the awe.json at the workflow root is used. Report the others instead of ignoring them silently.
   tree.ignoredEntries = ignoredEntries;
   return tree;
 }

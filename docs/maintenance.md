@@ -32,7 +32,7 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 - [ ] A precise change summary and supported environment/OS assumptions
 - [ ] Tests for any CLI, packaging, Skill frontmatter or versioning behavior changes
 - [ ] README, `docs/installation.md` and SKILL.md updated together if CLI commands changed
-- [ ] Compatibility notes for existing `ENTRY.md`, `awe.json`, `FLOW.json` and numbered prompts
+- [ ] Compatibility notes for existing `awe.json` (and the legacy `ENTRY.md`), `FLOW.json` and numbered prompts
 - [ ] No new credentials, tokens, `.env`, `.awe/runs`, `.awe/cache`, drafts, local files, or private content in the package
 - [ ] Clear handling for deprecated options and previous installed versions
 - [ ] `npm run check` and `npm run test:distribution` green (plus GitHub CI)
@@ -40,7 +40,7 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 
 ## Versioning and support
 
-- Use **SemVer** for the npm CLI package and Git tags. Keep CLI `--help`, `ENTRY.md`, numbered file discovery and control-group schema stable for patch/minor releases.
+- Use **SemVer** for the npm CLI package and Git tags. Keep CLI `--help`, `awe.json`, numbered file discovery and control-group schema stable for patch/minor releases.
 - When an upgrade breaks syntax or artifact formats, announce migration steps and consider major-version bump.
 - Keep `awe` Engine version separate from the `awe` Skill's Git ref; document which versions were tested together.
 - Use full commit SHAs or signed/versioned release tags when users need reproducibility; avoid silently pulling latest `main`.

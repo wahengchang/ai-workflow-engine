@@ -2,7 +2,7 @@
 
 ## Core contract
 
-- **Workflow** = directory containing `ENTRY.md` and numbered prompts/groups.
+- **Workflow** = directory containing `awe.json` and numbered prompts/groups.
 - **Step** = `N.N-slug.md`. Every prompt step has a unique numeric ID and a versioned source file (via Git).
 - **Group** = numbered folder or `stage-N-*` folder. Default behavior is sequential.
 - **Control group** = folder containing `FLOW.json` with `type: sequence | parallel | if | loop`.
@@ -19,7 +19,7 @@
 - IF reads a rendered `test` expression and chooses one of two named subdirectories. LOOP runs its children up to `maxIterations`, then compares the rendered `until` expression with `equals`.
 - Control routing is deterministic. Unsupported expressions fail rather than evaluate arbitrary code.
 - `awe run --dry` renders prompts only (`src/dry.js`): it never starts a command, writes no run and no cache, and shows upstream results as placeholders. It cannot evaluate IF/LOOP gates, so it shows every branch and one loop pass.
-- `ENTRY.md` marks the workflow root and is rendered and prepended to every step's prompt (it is part of every fingerprint; a change is reported per step as `(ENTRY.md changed)`). `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose.
+- `awe.json` marks the workflow root. Its optional `common` text (string or lines) is rendered and prepended to every step's prompt; it is part of every fingerprint, and a change is reported per step as `(the common text changed)`. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose. The v0.1 `ENTRY.md` is still read as a deprecated stand-in (`src/entry.js`).
 
 ## Variable grammar
 
@@ -37,7 +37,7 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 
 ## Security and compatibility
 
-- The engine does not follow symlinked workflow entries during discovery. A folder that holds no numbered prompt and no `FLOW.json` (bounded scan, using the same filename test as discovery itself) is treated as scratch space and ignored. An `ENTRY.md` below the root is ignored and reported.
+- The engine does not follow symlinked workflow entries during discovery. A folder that holds no numbered prompt and no `FLOW.json` (bounded scan, using the same filename test as discovery itself) is treated as scratch space and ignored. An `awe.json` (or `ENTRY.md`) below the root is ignored and reported.
 - The command string in `awe.json` is split into arguments (`command.js`) and started through `spawn(..., shell:false)`, never a shell. `{prompt}` is substituted into one argument after splitting, so prompt text cannot inject arguments or shell syntax. It inherits the user's execution permissions.
 - **Only execute trusted workflows and binaries.** Prompts can instruct an external AI agent to call its own tools; AWE does not sandbox that agent.
 - Version 0.1 uses `FLOW.json` to avoid implementing a partial, ambiguous YAML parser. A future YAML adapter can be added without changing flow semantics.

@@ -181,8 +181,8 @@ test('show: summary, a step output, prompt, errors and runs from other folders',
 
   const outside = await mkdtemp(path.join(os.tmpdir(), 'awe-outside-'));
   t.after(() => rm(outside, { recursive: true, force: true }));
-  await assert.rejects(cli(['show'], outside), { code: 'ENTRY_NOT_FOUND', message: /Not inside a workflow.*awe init <dir>/s });
-  await assert.rejects(cli(['run', '1.1'], outside), { code: 'ENTRY_NOT_FOUND' });
+  await assert.rejects(cli(['show'], outside), { code: 'WORKFLOW_NOT_FOUND', message: /Not inside a workflow.*awe init <dir>/s });
+  await assert.rejects(cli(['run', '1.1'], outside), { code: 'WORKFLOW_NOT_FOUND' });
 });
 
 test('check lists the plan and reports whether each executor exists', async t => {
@@ -324,52 +324,87 @@ test('a folder a step creates as scratch space does not break later commands', a
   await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'INVALID_STEP' });
 });
 
-test('a step that reruns although the cache is on says why; ENTRY.md is documented where it is used', async t => {
+const withCommon = (ws, extra = {}) => put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: agentCommand(ws.log), ...extra }));
+
+test('a step that reruns although the cache is on says why', async t => {
   const ws = await workspace(t, steps);
-  await put(ws.dir, 'ENTRY.md', 'Be concise.');
+  await withCommon(ws, { common: 'Be concise.' });
   const reasons = out => Object.fromEntries([...out.matchAll(/^ {2}(\d\.\d) +ran +\S+(?: +\((.+?)\))? +->/gm)].map(match => [match[1], match[2] ?? null]));
   assert.deepEqual(reasons((await cli(['run', ws.dir, '1.2'], ws.dir)).output), { '1.1': 'not cached yet', '1.2': null }, 'a named step needs no reason');
   assert.deepEqual(reasons((await cli(['run', ws.dir, '1.3'], ws.dir)).output), { '1.3': null });
 
-  await put(ws.dir, 'ENTRY.md', 'Be VERY concise.');
-  const afterEntry = (await cli(['run', ws.dir, '1.2'], ws.dir)).output;
-  assert.deepEqual(reasons(afterEntry), { '1.1': 'ENTRY.md changed', '1.2': null });
+  await withCommon(ws, { common: 'Be VERY concise.' });
+  assert.deepEqual(reasons((await cli(['run', ws.dir, '1.2'], ws.dir)).output), { '1.1': 'the common text changed', '1.2': null });
 
   await put(ws.dir, '1.1-a.md', 'OUTPUT::a edited#{n}');
   assert.deepEqual(reasons((await cli(['run', ws.dir, '1.3'], ws.dir)).output), { '1.1': 'its prompt file changed', '1.2': 'an earlier step ran again', '1.3': null });
 
-  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${(await import('../fixtures/helpers.mjs')).agentCommand(ws.log, ['--x'])}` }));
+  await withCommon(ws, { common: 'Be VERY concise.', run: agentCommand(ws.log, ['--x']) });
   assert.match((await cli(['run', ws.dir, '1.2'], ws.dir)).output, /^ {2}1\.1 +ran +\S+ +\(its command changed\)/m);
   assert.deepEqual(reasons((await cli(['run', ws.dir, '--no-cache'], ws.dir)).output), { '1.1': null, '1.2': null, '1.3': null }, 'no reason when you asked for a rerun');
 });
 
-test('check reports the size of ENTRY.md; ENTRY.md may not use step outputs and says why', async t => {
+test('"common" is the text every step shares: a string or lines, optional, rendered, and checked', async t => {
   const ws = await workspace(t, steps);
-  await put(ws.dir, 'ENTRY.md', 'x'.repeat(50));
-  const small = await cli(['check', ws.dir], ws.dir);
-  assert.match(small.output, /^ENTRY\.md {2}50 characters, added to the prompt of every step$/m);
-  assert.deepEqual(JSON.parse((await cli(['check', ws.dir, '--json'], ws.dir)).output).entry, { characters: 50, addedToSteps: 3 });
-  await put(ws.dir, 'ENTRY.md', 'x'.repeat(4500));
+  // lines, with an input variable
+  await withCommon(ws, { input: { topic: 'tea' }, common: ['You write about {{ input.topic }}.', 'Be brief.'] });
+  const dry = JSON.parse((await cli(['run', ws.dir, '1.2', '--dry', '--json'], ws.dir)).output).steps[0].prompt;
+  assert.equal(dry, '# Common instructions\nYou write about tea.\nBe brief.\n\n# Step 1.2 (1.2-b.md)\nA=[output of 1.1]\nOUTPUT::b#{n}\n');
+  // none: no preamble at all
+  await withCommon(ws, {});
+  const plain = JSON.parse((await cli(['run', ws.dir, '1.1', '--dry', '--json'], ws.dir)).output).steps[0].prompt;
+  assert.equal(plain, '# Step 1.1 (1.1-a.md)\nOUTPUT::a#{n}\n');
+  assert.ok(!(await cli(['check', ws.dir], ws.dir)).output.includes('Common '), 'check mentions it only when there is one');
+  // size
+  await withCommon(ws, { common: 'x'.repeat(50) });
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /^Common {4}50 characters \(awe\.json "common"\), added to the prompt of every step$/m);
+  assert.deepEqual(JSON.parse((await cli(['check', ws.dir, '--json'], ws.dir)).output).common, { characters: 50, addedToSteps: 3 });
+  await withCommon(ws, { common: 'x'.repeat(4500) });
   assert.match((await cli(['check', ws.dir], ws.dir)).output, /4500 characters.*That is large: every step pays for it, and any edit reruns every step/);
-  await put(ws.dir, 'ENTRY.md', 'See {{ steps["1.1"].output }}');
-  await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'MISSING_REFERENCE', message: /ENTRY\.md \(while preparing step 1\.1\).*can only use \{\{ input\.\* \}\}.*step's own prompt/s });
-  await assert.rejects(cli(['check', path.join(ws.dir, '..', 'no-such-folder')]), { code: 'ENTRY_NOT_FOUND' });
+  // not step outputs: the first step has none yet
+  await withCommon(ws, { common: 'See {{ steps["1.1"].output }}' });
+  await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'MISSING_REFERENCE', message: /"common" in awe\.json \(while preparing step 1\.1\).*can only use \{\{ input\.\* \}\}.*step's own prompt/s });
+  // invalid
+  for (const common of [5, ['ok', 3], { a: 1 }]) {
+    await withCommon(ws, { common });
+    await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'INVALID_CONFIG', message: /"common" must be a string, or an array of lines/ });
+  }
 });
 
-test('two ENTRY.md files: only the root one is used, the nested one is reported, and no step is dropped silently', async t => {
+test('awe.json marks the workflow root; the v0.1 ENTRY.md still works, with a warning', async t => {
+  const bare = await mkdtemp(path.join(os.tmpdir(), 'awe-bare-'));
+  t.after(() => rm(bare, { recursive: true, force: true }));
+  await put(bare, '1.1-a.md', 'x');
+  await assert.rejects(cli(['check', bare]), { code: 'WORKFLOW_NOT_FOUND', message: /Not inside a workflow \(no awe\.json in .*awe init <dir>.*\{"version": 2\}/s });
+  await put(bare, 'awe.json', '{"version": 2}');
+  assert.match((await cli(['check', bare])).output, /^VALID .*\(1 prompt steps\)/);
+
+  const legacy = await workspace(t, steps);
+  await put(legacy.dir, 'ENTRY.md', 'Legacy rules.');
+  const checked = await cli(['check', legacy.dir], legacy.dir);
+  assert.deepEqual(checked.warnings, ['ENTRY.md is deprecated. Move its text into awe.json as "common" (a string, or an array of lines), then delete the file.']);
+  assert.match(checked.output, /^Common {4}13 characters/m);
+  const dry = JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output);
+  assert.match(dry.steps[0].prompt, /^# Common instructions\nLegacy rules\.\n\n# Step 1\.1 /);
+  await withCommon(legacy, { common: 'New rules.' });
+  const both = await cli(['check', legacy.dir], legacy.dir);
+  assert.deepEqual(both.warnings, ['ENTRY.md is ignored because awe.json has "common". Delete the file.']);
+  assert.match(JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output).steps[0].prompt, /New rules\./);
+});
+
+test('a nested awe.json is reported and ignored; no step is dropped silently', async t => {
   const ws = await workspace(t, {
-    'ENTRY.md': 'ROOT RULES',
     '1.1.md': 'one', '1.2.md': 'two',
-    'stage-2/ENTRY.md': 'NESTED RULES', 'stage-2/2.1.md': 'two-one', 'stage-2/2.2.md': 'two-two',
+    'stage-2/awe.json': '{"version": 2, "common": "NESTED RULES"}', 'stage-2/2.1.md': 'two-one', 'stage-2/2.2.md': 'two-two',
   });
+  await withCommon(ws, { common: 'ROOT RULES' });
   const checked = await cli(['check', ws.dir], ws.dir);
   assert.match(checked.output, /VALID .*\(4 prompt steps\)/);
   assert.equal(checked.warnings.length, 1);
-  assert.match(checked.warnings[0], /^stage-2[\\/]ENTRY\.md is ignored: only the ENTRY\.md at the workflow root is used/);
+  assert.match(checked.warnings[0], /^stage-2[\\/]awe\.json is ignored: only the awe\.json at the workflow root is used/);
   const dry = await cli(['run', ws.dir, '2.1', '--dry'], ws.dir);
-  assert.match(dry.output, /# Workflow instructions \(ENTRY\.md\)\nROOT RULES\n\n# Step 2\.1 \(stage-2[\\/]2\.1\.md\)\ntwo-one\n/);
+  assert.match(dry.output, /# Common instructions\nROOT RULES\n\n# Step 2\.1 \(stage-2[\\/]2\.1\.md\)\ntwo-one\n/);
   assert.ok(!dry.output.includes('NESTED RULES'));
-  assert.equal(dry.warnings.length, 1);
   const order = JSON.parse((await cli(['run', ws.dir, '--dry', '--json'], ws.dir)).output).steps.map(step => step.id);
   assert.deepEqual(order, ['1.1', '1.2', '2.1', '2.2']);
 

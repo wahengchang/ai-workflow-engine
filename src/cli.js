@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { loadEntry, findWorkflowRoot } from './entry.js';
 import { discoverWorkflow, flatten, outputLocations } from './discover.js';
 import { getPlan } from './runtime.js';
@@ -22,7 +22,7 @@ Usage:
   awe show [dir] [step] [flags]   look at results (output, prompt, stderr)
   awe check [dir]                 validate, list the steps, check the executor
 
-  dir   a workflow folder; default: the current folder, or the nearest parent holding ENTRY.md
+  dir   a workflow folder (it holds awe.json); default: the current folder, or the nearest parent that does
   step  1.2, 3.1.2, or 2.1.1@2 (iteration 2 of the LOOP around 2.1.1)
 
 Build a workflow one step at a time:
@@ -165,7 +165,7 @@ async function prepare(cwd, dir) {
   const entry = await loadEntry(found);
   const tree = await discoverWorkflow(entry.root, { outputs: outputLocations(entry.config) });
   // Check author-written syntax before any executor (and any paid calls) runs.
-  validateTemplate(entry.instructions, path.relative(cwd, entry.entryFile) || 'ENTRY.md');
+  validateTemplate(entry.common ?? '', entry.commonLabel);
   const sources = new Map();
   for (const node of flatten(tree)) {
     if (node.type === 'prompt') {
@@ -178,7 +178,7 @@ async function prepare(cwd, dir) {
   }
   const outputs = await validateReferences(entry, tree, sources);
   const promptIds = flatten(tree).filter(node => node.type === 'prompt').map(node => node.id);
-  const warnings = [...entry.settings.warnings, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the ENTRY.md at the workflow root is used, and it is added to every step. Move its text into the root ENTRY.md or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
+  const warnings = [...entry.settings.warnings, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
   return { entry, tree, promptIds, sources, outputs, warnings };
 }
 
@@ -206,7 +206,7 @@ async function initCommand({ dir }, cwd, options = {}) {
   lines.push(agent
     ? `Executor  ${agent.run}   (found ${agent.name} on PATH; change "run" in awe.json to use another)`
     : 'Executor  none found on PATH. Add one to awe.json, e.g.  "run": "claude -p {prompt}"');
-  lines.push('ENTRY.md  instructions added to the prompt of every step; keep it short', '', `Next  cd ${into}`, '      awe run --dry     preview every prompt; calls nothing');
+  lines.push('Common    the "common" text in awe.json is added to the prompt of every step; keep it short', '', `Next  cd ${into}`, '      awe run --dry     preview every prompt; calls nothing');
   lines.push(agent ? '      awe run 1.1       run the first step for real' : '      awe check         shows what is missing');
   return { output: lines.join('\n'), code: 0, warnings: [] };
 }
@@ -226,11 +226,12 @@ async function checkCommand({ dir, flags }, cwd) {
   const problems = used.filter(item => !item.display || !item.found);
   // The exit code answers "is the workflow valid?" (invalid workflows throw, exit 2). A missing executor is
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
-  const entryChars = entry.instructions.length;
-  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, entry: { characters: entryChars, addedToSteps: promptIds.length }, promptSteps: promptIds.length, plan, executors: used };
+  const commonChars = (entry.common ?? '').trim().length;
+  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, addedToSteps: commonChars ? promptIds.length : 0 }, promptSteps: promptIds.length, plan, executors: used };
   if (flags.json) return { output: JSON.stringify(result, null, 2), code: 0, warnings };
-  const lines = [`VALID ${path.relative(cwd, entry.entryFile) || 'ENTRY.md'} (${promptIds.length} prompt steps)`];
-  lines.push(`ENTRY.md  ${entryChars} characters, added to the prompt of every step${entryChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`, prettyPlan(plan), '');
+  const lines = [`VALID ${path.relative(cwd, entry.root) || '.'} (${promptIds.length} prompt steps)`];
+  if (commonChars) lines.push(`Common    ${commonChars} characters (awe.json "common"), added to the prompt of every step${commonChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`);
+  lines.push(prettyPlan(plan), '');
   for (const item of used) {
     if (!item.display) lines.push(`Executor  ${item.name}: NOT CONFIGURED`);
     else lines.push(`Executor  ${item.name}: ${item.display}   ${item.found ? `(found: ${item.found})` : `NOT READY — "${item.executable}" was not found on PATH`}`);
@@ -308,7 +309,7 @@ function nextHint(state, promptIds, entry, overrides) {
 
 async function showCommand({ dir, step, flags }, cwd) {
   const found = await findWorkflowRoot(path.resolve(cwd, dir ?? '.'));
-  const root = path.basename(found) === 'ENTRY.md' ? path.dirname(found) : found;
+  const root = (await stat(found)).isDirectory() ? found : path.dirname(found);
   const target = step ? parseStepArg(step) : null;
   const result = await show(root, {
     step: target?.step, occurrence: target?.iterations ? `${target.step}@${target.iterations.join('.')}` : undefined,

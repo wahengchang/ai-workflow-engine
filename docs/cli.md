@@ -10,7 +10,7 @@ awe check [dir]                 validate, list the steps, check the executor
 ```
 
 `dir` is a workflow folder. Leave it out and awe uses the current folder, or the nearest parent that contains
-`ENTRY.md`, so every command also works from a sub-folder. `step` is a step address: `1.2`, `3.1.2`, or `2.1.1@2`
+`awe.json`, so every command also works from a sub-folder. `step` is a step address: `1.2`, `3.1.2`, or `2.1.1@2`
 (see [LOOPs](#loops-and-parallel-groups)). A word that looks like `1.2` is always a step, never a folder; write `./1.2`
 for a folder with that name.
 
@@ -135,7 +135,7 @@ Whatever the mode, every run stores its results, so a later `awe run 1.3` can us
 
 A stored result is reused only if all of this still holds:
 
-- the step's fingerprint is unchanged: its prompt file, `ENTRY.md`, inputs (`awe.json` plus `--var`), its command line
+- the step's fingerprint is unchanged: its prompt file, the common text, inputs (`awe.json` plus `--var`), its command line
   (every argument: another `--model` is another result; timeouts are ignored), declared output files, its position
   in the workflow (including the IF branch and LOOP iteration), and **the exact results it could see from earlier steps**;
 - the stored output and every saved output file still exist and match the recorded size and SHA-256.
@@ -143,12 +143,12 @@ A stored result is reused only if all of this still holds:
 | You change… | Effect |
 | --- | --- |
 | a step's prompt | that step and everything after it in order run again; earlier steps are kept |
-| `ENTRY.md` | every step is stale (it is part of every prompt) |
+| the common text | every step is stale (it is part of every prompt) |
 | an input (`--var`, `awe.json`) | everything is stale, and the old results are kept under the old input |
 | rerun a step (`awe run 1.2`) | everything that could see its result is stale, **even if the new output is identical** |
 | a stored file or artifact | `CACHE_INVALID` is recorded; that step and its dependents run again |
 
-A step that runs although a cache is in use says why, in brackets: `(not cached yet)`, `(ENTRY.md changed)`, `(its prompt file
+A step that runs although a cache is in use says why, in brackets: `(not cached yet)`, `(the common text changed)`, `(its prompt file
 changed)`, `(an earlier step ran again)`, `(its command changed)`, `(its previous attempt failed)`. A step you named, or a run
 with `--no-cache`, needs no reason.
 
@@ -167,7 +167,7 @@ succeeds again. Old attempts stay on disk (`awe show`).
   only that branch's prerequisites. If a branch fails, the siblings that succeeded are kept.
 - A group such as `3.1` is not a step; awe lists the steps inside it.
 
-Each `awe run` reads `ENTRY.md`, `awe.json` and every prompt once at the start; edits made while it runs apply to the next
+Each `awe run` reads `awe.json` and every prompt once at the start; edits made while it runs apply to the next
 run.
 
 ## `awe show`
@@ -184,7 +184,7 @@ awe show ... --json       the stored state
 
 ## `awe check`
 
-Validates `ENTRY.md`, every prompt and flow file (template syntax, references to steps that are not guaranteed to
+Validates the common text, every prompt and flow file (template syntax, references to steps that are not guaranteed to
 exist, IF/LOOP settings, output declarations), prints the plan, and looks each configured executable up on PATH. A
 workflow with a problem fails with exit `2`. A missing executor is reported (`NOT READY`, and `"ready": false` with `--json`) but does not fail the check, so a CI machine without an AI CLI can still validate workflows.
 
@@ -194,31 +194,48 @@ Renders every prompt without calling anything. References to earlier results sho
 `[file report of 1.1]`; every IF branch is shown, and a LOOP body once. Nothing is written: no run, no cache. A dry run
 checks wiring and wording; it says nothing about what a model will answer.
 
-## ENTRY.md
+## Common text (`"common"` in `awe.json`)
 
-`ENTRY.md` is the instructions every step shares: who the AI is working as, the audience, tone, rules ("never invent
-sources"), the output format. It is not a step and never runs on its own.
+A workflow is a folder that holds `awe.json` (it can be as small as `{ "version": 2 }`); awe finds it from any sub-folder by
+walking up. `"common"` is the optional text every step shares: who the AI is working as, the audience, tone, rules
+("never invent sources"), the output format. It is not a step and never runs on its own.
+
+```json
+{
+  "version": 2,
+  "common": [
+    "You write for beginners about {{ input.topic }}.",
+    "Never invent sources."
+  ]
+}
+```
 
 | | |
 | --- | --- |
-| **Required** | a folder is a workflow because it contains `ENTRY.md`. awe also finds the workflow from any sub-folder by walking up to it. Missing: `ENTRY_NOT_FOUND`; empty: `EMPTY_ENTRY`. |
-| **Used** | on **every step of every run**. The prompt a step sends is `# Workflow instructions (ENTRY.md)`, your text, then `# Step 1.2 (…)`, the step's own prompt. `awe show 1.2 --prompt` prints exactly that. |
+| **Form** | a string, or an array of lines (joined with newlines; easier to read than one long string). Optional: without it a step's prompt is just the step. |
+| **Used** | on **every step of every run**. The prompt a step sends is `# Common instructions`, your text, then `# Step 1.2 (…)`, the step's own prompt. `awe show 1.2 --prompt` prints exactly that. |
 | **Variables** | rendered like a prompt, so `{{ input.topic }}` works. It cannot use `{{ steps[...] }}`: it is added to the first step too, where no step has run yet. Put step references in the step's own prompt. |
-| **Only the root one** | an `ENTRY.md` in a sub-folder (`stage-2/ENTRY.md`) is **not** used for that folder's steps. `awe check` / `awe run` warn about it. There are no per-stage instructions: put them in that folder's step prompts, or in the root `ENTRY.md`. Running awe from inside `stage-2/` would treat that folder as its own, separate workflow. |
-| **Not** | a README for people (everything in it is sent, and paid for, on every step), not configuration (that is `awe.json`), and there is no per-stage or per-step override. |
+| **Only the root one** | an `awe.json` in a sub-folder (`stage-2/awe.json`) is **not** used for that folder's steps. `awe check` / `awe run` warn about it. There is no per-stage common text: put it in that folder's step prompts, or in the root `awe.json`. Running awe from inside `stage-2/` would treat that folder as its own, separate workflow. |
+| **Not** | a README for people (everything in it is sent, and paid for, on every step) and not a place for values that change per run (use `input`). |
+
+Every step is its own AI call with no memory of the others, so the common text is sent with each one: a hundred steps send it
+a hundred times, once per call, never accumulating. Keep it to a few lines.
 
 Lifecycle:
 
-1. `awe init` writes a starting `ENTRY.md`.
+1. `awe init` writes a starting `"common"`.
 2. `awe check` validates its syntax and references and prints its size. It warns above 4,000 characters.
 3. Each `awe run` (and `awe run --dry`) reads it once at the start and renders it into every step's prompt.
 4. It is part of every step's fingerprint, so **editing it, even a comma, makes every step stale**. The next run that
-   uses the cache says so on each step it reruns: `1.1  ran  18s  (ENTRY.md changed)`. For a workflow with slow or costly
-   steps, settle `ENTRY.md` early and put anything that varies in the step prompts or in `input`.
+   uses the cache says so on each step it reruns: `1.1  ran  18s  (the common text changed)`. For a workflow with slow or
+   costly steps, settle it early and put anything that varies in the step prompts or in `input`.
 5. Run outputs keep the rendered prompt per attempt, so the exact text that was sent stays inspectable.
 
-Rule of thumb: if it is true for every step, it belongs in `ENTRY.md`; if it is true for one step, it belongs in that
-step's prompt; if it changes between runs, it belongs in `awe.json` `input` (`--var`).
+Rule of thumb: if it is true for every step, it belongs in `"common"`; if it is true for one step, it belongs in that step's
+prompt; if it changes between runs, it belongs in `input` (`--var`).
+
+The v0.1 `ENTRY.md` file still works as a deprecated stand-in for both jobs (root marker and common text) and prints a
+warning; move its text into `"common"` and delete it.
 
 ## Order, and what a step receives
 
@@ -227,13 +244,13 @@ Steps run in numeric order, not file-name order: `1.1`, `1.2`, then everything i
 prefix (`2.1-review/`) or a `stage-N` name (`stage-2/`): a folder just called `2/` that holds prompts is rejected, with
 the name to use instead.
 
-A step receives exactly two things: the root `ENTRY.md`, then its own prompt, with `{{ … }}` filled in. It does not
+A step receives exactly two things: the root common text, then its own prompt, with `{{ … }}` filled in. It does not
 receive earlier steps' prompts or outputs, and the AI keeps no memory between steps. To use an earlier result, name it in
 the step's prompt: `{{ steps["1.1"].output }}` (the text) or `{{ steps["1.1"].artifact }}` (the file path).
 
 ## Workflow files
 
-Unchanged: `ENTRY.md` (prepended to every prompt), numbered `N.N-name.md` prompts, `FLOW.json` for `parallel` / `if` /
+Unchanged: numbered `N.N-name.md` prompts, `FLOW.json` for `parallel` / `if` /
 `loop` groups, and `{{ input.x }}` / `{{ steps["1.1"].output }}` / `{{ steps["1.1"].artifact }}` /
 `{{ steps["1.1"].files["name"] }}` references. See the [README](../README.md).
 
@@ -341,7 +358,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `CLI_USAGE` | a flag or argument is wrong; the message lists the valid forms |
 | `NO_EXECUTOR`, `UNKNOWN_EXECUTOR` | no command configured, or `--executor` named one that does not exist (lists the names) |
 | `INVALID_CONFIG` | `awe.json` has a problem; the message names the key |
-| `ENTRY_NOT_FOUND` | not inside a workflow; use `awe init <dir>`, `cd` into one, or pass the folder |
+| `WORKFLOW_NOT_FOUND` | not inside a workflow; use `awe init <dir>`, `cd` into one, or pass the folder |
 | `STEP_NOT_FOUND` | no such step, or the address names a group (lists the valid steps) |
 | `ITERATION_REQUIRED` / `ITERATION_INVALID` | `step@n` is ambiguous, malformed or out of range |
 | `TARGET_UNREACHABLE` | the gate or loop never reaches that step; it was not executed |
@@ -365,6 +382,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `awe status`, `awe inspect`, `awe explain` | `awe show` |
 | `awe validate`, `awe plan` | `awe check` |
 | `awe init --template content --out DIR` | `awe init DIR` |
+| `ENTRY.md` (root marker and text added to every prompt) | `awe.json` marks the root; the shared text is its `"common"` field. `ENTRY.md` still works, with a deprecation warning |
 
 The old `executor: { type, argv, timeoutMs }` block in `awe.json` still works and prints a deprecation warning with the
 replacement; `"type": "echo"` no longer exists. Old `.awe/runs` and `.awe/dev` folders are neither read nor deleted.

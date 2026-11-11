@@ -40,7 +40,7 @@ try {
   const packed = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', temp]));
   assert.equal(packed.length, 1, 'npm pack should create exactly one tarball');
   const items = packed[0].files.map(f => f.path);
-  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/cli.md', 'src/engine.js', 'src/cache.js', 'src/command.js', 'src/config.js', 'src/show.js', 'src/outputs.js', 'examples/content-generation/ENTRY.md']) {
+  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/cli.md', 'src/engine.js', 'src/cache.js', 'src/command.js', 'src/config.js', 'src/show.js', 'src/outputs.js', 'examples/content-generation/awe.json']) {
     assert.ok(items.includes(expected), `Missing from npm package: ${expected}`);
   }
   const excluded = items.filter(p => /(^|\/)(\.awe|\.git|node_modules|test|fixtures|\.github|scripts|\.agents)(\/|$)/.test(p) || /(^|\/)(\.env|\.npmrc)(\.|$)/.test(p));
@@ -54,7 +54,7 @@ try {
   const tarball = path.join(temp, packed[0].filename);
   runNpm(['install', '--prefix', prefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock', '--loglevel=error', tarball]);
   assert.match(runBin(prefix, ['--help']), /awe/i);
-  const example = path.join(prefix, 'node_modules', '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation', 'ENTRY.md');
+  const example = path.join(prefix, 'node_modules', '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation');
   assert.match(runBin(prefix, ['check', example]), /VALID/);
 
   // Exercise npm's actual bin resolution, not just node <installed>/bin/awe.js.
@@ -67,7 +67,7 @@ try {
   const shim = process.platform === 'win32' ? path.join(globalPrefix, 'awe.cmd') : path.join(globalPrefix, 'bin', 'awe');
   assert.ok(existsSync(shim), 'Global npm install must create an awe command shim');
   const globalBin = path.join(globalModules, '@wahengchang', 'ai-workflow-engine', 'bin', 'awe.js');
-  const globalExample = path.join(globalModules, '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation', 'ENTRY.md');
+  const globalExample = path.join(globalModules, '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation');
   for (const args of [['--help'], ['check', globalExample]]) {
     assert.ok(execFileSync(process.execPath, [globalBin, ...args], { cwd: temp, encoding: 'utf8' }).length);
   }
@@ -77,7 +77,7 @@ try {
   const linkedModules = process.platform === 'win32' ? path.join(linkPrefix, 'node_modules') : path.join(linkPrefix, 'lib', 'node_modules');
   const linkedBin = path.join(linkedModules, '@wahengchang', 'ai-workflow-engine', 'bin', 'awe.js');
   assert.match(execFileSync(process.execPath, [linkedBin, '--help'], { cwd: temp, encoding: 'utf8' }), /awe/i);
-  assert.match(execFileSync(process.execPath, [linkedBin, 'check', path.join(root, 'examples/content-generation/ENTRY.md')], { cwd: temp, encoding: 'utf8' }), /VALID/);
+  assert.match(execFileSync(process.execPath, [linkedBin, 'check', path.join(root, 'examples/content-generation')], { cwd: temp, encoding: 'utf8' }), /VALID/);
 
   // A local tarball verifies scoped-package binary selection without claiming
   // that the package has been published to the npm registry.

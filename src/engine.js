@@ -182,7 +182,7 @@ async function runInSession(entry, tree, { options, outputs, info, targetNode, i
     state, store, session, entry, outputs, info, target, sources, readCache, salt,
     signal: options.signal, hooks: options.hooks, acknowledged,
     resolveExecutor: options.resolveExecutor,
-    entryDigest: sha256(entry.instructions),
+    commonDigest: sha256(entry.common ?? ''),
     inputDigest: session.data.compat.input,
     subtrees: new Map(),
   };
@@ -303,7 +303,7 @@ async function walk(node, context, sh, scope) {
 // Ordered by what a person can act on. `prompt` is derived from the others, so it is only named when
 // nothing else explains the change.
 const REASONS = [
-  ['entry', 'ENTRY.md changed'],
+  ['common', 'the common text changed'],
   ['source', 'its prompt file changed'],
   ['executor', 'its command changed'],
   ['outputs', 'its output declarations changed'],
@@ -387,11 +387,11 @@ async function walkPrompt(node, context, sh, scope) {
   const executor = sh.resolveExecutor(id);
   const executorDigest = secretDigest(sh.salt, { argv: executor.argv });
   const upstream = precontext(context, ord);
-  const references = [...templateReferences(sh.entry.instructions), ...templateReferences(source)].filter(ref => ref.stepId);
+  const references = [...templateReferences(sh.entry.common ?? ''), ...templateReferences(source)].filter(ref => ref.stepId);
   const inputs = [...new Map(references.map(ref => [ref.expression, { step: ref.stepId, field: ref.fileName ? `files.${ref.fileName}` : ref.field, resultId: context.steps[ref.stepId]?.resultId ?? null }])).values()];
   const parts = {
     v: FINGERPRINT_VERSION, plan: node.relative, address, control: scope.control,
-    entry: sh.entryDigest, source: sha256(source), input: sh.inputDigest, executor: executorDigest,
+    common: sh.commonDigest, source: sha256(source), input: sh.inputDigest, executor: executorDigest,
     outputs: decls, upstream: upstream.map(([step, result]) => [step, result.resultId]), prompt: sha256(prompt),
   };
   const fingerprint = digestOf(parts);

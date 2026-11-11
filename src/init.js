@@ -5,7 +5,7 @@ import { AweError } from './errors.js';
 
 // Explicit files avoid copying local example runs or other developer content.
 const CONTENT_FILES = [
-  'ENTRY.md', 'awe.json',
+  'awe.json',
   'stage-1/1.1-research.md', 'stage-1/1.2-outline.md',
   'stage-2/2.1-draft.md',
   'stage-3/3.1-checks/FLOW.json',
@@ -40,5 +40,5 @@ export async function initWorkflow(destination, { agent = null } = {}) {
     await rm(destination, { recursive: true, force: true });
     throw error;
   }
-  return path.join(destination, 'ENTRY.md');
+  return path.join(destination, 'awe.json');
 }

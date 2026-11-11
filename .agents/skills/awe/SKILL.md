@@ -1,6 +1,6 @@
 ---
 name: awe
-description: Run, check, preview and inspect filesystem-defined AI workflows with the AWE CLI. Use when the user provides an ENTRY.md, numbered Markdown prompt steps, or asks to automate a research, writing, review or similar pipeline.
+description: Run, check, preview and inspect filesystem-defined AI workflows with the AWE CLI. Use when the user provides a workflow folder (an awe.json with numbered Markdown prompt steps), or asks to automate a research, writing, review or similar pipeline.
 compatibility: Requires the separately installed awe CLI and Node.js 20 or newer. Optional real AI command executor must be configured by the user.
 ---
 
@@ -11,7 +11,7 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 ## Before using AWE
 
 1. Check whether `awe` is available (`awe --help`). If missing, stop and explain the CLI installation options in the [installation guide](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/installation.md). Do not assume adding this Skill installs the CLI.
-2. Locate the user's workflow folder (it contains `ENTRY.md`) and confirm it is trusted. Run `awe check` first: it validates the workflow, lists the steps and tells you whether the configured AI command exists.
+2. Locate the user's workflow folder (it contains `awe.json`) and confirm it is trusted. Run `awe check` first: it validates the workflow, lists the steps and tells you whether the configured AI command exists.
 3. A real run needs a user-configured AI command in `awe.json` (`"run": "claude -p {prompt}"`). Without one, `awe run` stops with examples. External commands inherit the user's machine permissions and may incur costs: tell the user before running.
 
 ## Commands
@@ -22,7 +22,7 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 - `awe run [dir] [step]` — run the workflow. **Naming a step** (`awe run 1.2`) runs only that step: earlier steps come from the cache (and run first if missing), later steps are untouched. A whole run (`awe run`) starts from the first step and ignores the cache unless `--cache` is given; `--no-cache` forces everything to rerun. The output states which mode ran and which steps were `cached` or `ran`.
 - `awe run … --var key=value`, `--executor <name>`, `--timeout <seconds>`, `--json` — override an input, use a named executor from `awe.json`, set a per-step time limit, get machine-readable state. Exit codes: 0 ok, 1 a step failed, 2 usage/configuration problem, 129/130/143 interrupted.
 - `awe show [dir] [step]` — latest run summary; `awe show 1.2` prints a step's output, `--prompt` the prompt that was sent, `--err` its last stderr lines. Works from any sub-folder of the workflow.
-- `ENTRY.md` is instructions shared by **every** step: it is added to every step's prompt (and paid for each time), may use `{{ input.* }}` but not step outputs, and editing it reruns every step. Put what is true for all steps there, what is true for one step in that step's prompt, and what changes between runs in `awe.json` `input`. Do not use it as a README. A step that reruns although the cache is on says why in brackets, e.g. `(ENTRY.md changed)`.
+- `"common"` in `awe.json` (a string, or an array of lines) is text shared by **every** step: it is added to every step's prompt (each step is its own AI call, so it is paid for each time), may use `{{ input.* }}` but not step outputs, and editing it reruns every step. Put what is true for all steps there, what is true for one step in that step's prompt, and what changes between runs in `input`. Do not use it as a README. A step that reruns although the cache is on says why in brackets, e.g. `(the common text changed)`. The v0.1 `ENTRY.md` file still works, with a deprecation warning; offer to move its text into `"common"`.
 - Advice for building a workflow: run steps one at a time (`awe run 1.1`, read it with `awe show 1.1`, edit, rerun, then `awe run 1.2`), and finish with a whole `awe run`.
 - If AWE reports `UNKNOWN_EFFECT`, an earlier command was interrupted (Ctrl-C, timeout, crash): tell the user what it may have affected and only run the same command again with `--retry <step>` after they agree.
 - Steps may declare named output files (PDF, images) in `awe.json` under `steps.<id>.outputs`; later prompts reference the saved copy as `{{ steps["1.1"].files["name"] }}`. Steps may also set `executor` and `timeout` there. See `docs/cli.md`.

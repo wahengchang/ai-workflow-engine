@@ -148,7 +148,7 @@ test('executor argument values are omitted from state; prompts are kept as files
   assert.ok(!text.includes('argv'));
   assert.deepEqual((await readdir(path.join(dir, '.awe/runs', state.runId, 'artifacts'))).sort(), ['1-1-attempt-1.md', 'prompt-1-1-attempt-1.md']);
   const prompt = await readFile(state.steps['1.1'].prompt, 'utf8');
-  assert.match(prompt, /# Workflow instructions \(ENTRY.md\)\n# Instructions/);
+  assert.match(prompt, /^# Common instructions\n# Instructions\n\n# Step 1\.1 /);
   assert.match(prompt, /OUTPUT::ok/);
   assert.equal((await cli(['show', dir, '1.1', '--prompt'])).output, prompt.trimEnd());
 

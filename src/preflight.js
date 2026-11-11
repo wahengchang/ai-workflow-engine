@@ -8,11 +8,11 @@ export async function validateReferences(entry, tree, sources = new Map()) {
   // Also validates the awe.json output declarations (including parallel path conflicts).
   const outputs = declaredOutputs(entry.config, tree);
   await assertOutputLocations(entry.root, tree, outputs);
-  function check(source, available, label) {
+  function check(source, available, label, isCommon = false) {
     for (const reference of templateReferences(source, label)) {
       if (reference.stepId && !available.has(reference.stepId)) {
-        const hint = label.startsWith('ENTRY.md')
-          ? '\nENTRY.md is added to the prompt of every step, including the first, so it can only use {{ input.* }}. Refer to earlier steps from the step\'s own prompt.'
+        const hint = isCommon
+          ? '\nThe common text is added to the prompt of every step, including the first, so it can only use {{ input.* }}. Refer to earlier steps from the step\'s own prompt.'
           : '';
         throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} is not guaranteed to be available here (unknown, forward, parallel sibling, or conditional reference)${hint}`);
       }
@@ -25,7 +25,7 @@ export async function validateReferences(entry, tree, sources = new Map()) {
   async function visit(node, upstream) {
     const available = new Set(upstream);
     if (node.type === 'prompt') {
-      check(entry.instructions, available, `ENTRY.md (while preparing step ${node.id})`);
+      check(entry.common ?? '', available, `${entry.commonLabel} (while preparing step ${node.id})`, true);
       check(sources.get(node.file) ?? await readFile(node.file, 'utf8'), available, node.relative);
       available.add(node.id);
       return available;

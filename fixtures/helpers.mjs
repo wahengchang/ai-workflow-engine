@@ -18,7 +18,7 @@ export async function workspace(t, files = {}, config = {}) {
   t.after(() => rm(dir, { recursive: true, force: true }));
   const log = path.join(os.tmpdir(), `${path.basename(dir)}.calls.jsonl`);
   t.after(() => rm(log, { force: true }));
-  const all = { 'ENTRY.md': '# Instructions', 'awe.json': JSON.stringify({ version: 2, run: agentCommand(log), ...config }), ...files };
+  const all = { 'awe.json': JSON.stringify({ version: 2, run: agentCommand(log), ...config }), ...files };
   for (const [name, text] of Object.entries(all)) await put(dir, name, text);
   return { dir, log };
 }

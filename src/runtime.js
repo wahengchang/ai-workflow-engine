@@ -1,12 +1,13 @@
 import { renderTemplate } from './template.js';
 import { flatten } from './discover.js';
 
-// The prompt a step sends: ENTRY.md instructions, then the step. Shared by awe run and awe run --dry
-// so both build byte-identical prompts.
+// The prompt a step sends: the common text (if the workflow has any), then the step. Shared by awe run
+// and awe run --dry so both build byte-identical prompts.
 export function buildPrompt(entry, source, context, node) {
   const compiled = renderTemplate(source, context, node.relative);
-  const instructions = renderTemplate(entry.instructions, context, `ENTRY.md (while preparing step ${node.id})`);
-  return `# Workflow instructions (ENTRY.md)\n${instructions}\n\n# Step ${node.id} (${node.relative})\n${compiled}\n`;
+  const common = entry.common?.trim() ? renderTemplate(entry.common, context, `${entry.commonLabel} (while preparing step ${node.id})`) : '';
+  const head = common ? `# Common instructions\n${common}\n\n` : '';
+  return `${head}# Step ${node.id} (${node.relative})\n${compiled}\n`;
 }
 
 export function gateValue(value, config, expected = false) {

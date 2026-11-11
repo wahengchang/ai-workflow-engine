@@ -1,6 +1,6 @@
 # AWE — AI Workflow Engine
 
-**Filesystem-first, prompt-first AI workflow interpreter.** Create an `ENTRY.md` (the instructions every step shares), put numbered Markdown prompts in folders, and run them via a CLI named **`awe`**. Designed for content research → planning → writing → review, but the engine does not contain content-specific rules.
+**Filesystem-first, prompt-first AI workflow interpreter.** Create an `awe.json`, put numbered Markdown prompts in folders, and run them via a CLI named **`awe`**. Designed for content research → planning → writing → review, but the engine does not contain content-specific rules.
 
 > **v0.2:** a four-command CLI (`init`, `run`, `show`, `check`) over a deterministic workflow engine. AWE never pretends to
 > have called an AI: without a configured command, `awe run` stops and tells you how to set one; `awe run --dry` previews
@@ -54,8 +54,7 @@ Everything about the commands, the cache rules, per-step executors, output files
 
 ```text
 my-content-workflow/
-├── ENTRY.md                   # instructions added to every step's prompt; marks the workflow root
-├── awe.json                   # optional inputs and executor config
+├── awe.json                   # marks the workflow root: inputs, executor, shared "common" text
 ├── stage-1-research/
 │   ├── 1.1-topic-research.md   # default: sequential in numeric order
 │   └── 1.2-outline.md
@@ -117,7 +116,7 @@ Or a declared output file: {{ steps["1.1"].files["report"] }}
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored), and valid results are cached in `.awe/cache/`. No implicit cross-step model memory; state moves through declared values and artifact paths.
 
-`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context, so it can use `{{ input.* }}` but not step outputs. Editing it makes every cached step stale (see [ENTRY.md](docs/cli.md#entrymd)). (Behavior change from v0.1: ENTRY.md used to be passed through verbatim, so a literal `{{ ... }}` there must now be escaped as `\{{`.) Template errors name the file (or step, or `FLOW.json` expression) and line. Use `{{ input.audience }}`, rather than `{{ audience }}`. `check`, `run` and `run --dry` check template syntax in ENTRY, prompts, and control expressions before execution; they also reject unknown/forward step references, references between parallel siblings before their join, and branch-only outputs used after an IF. Checks conservatively cover every branch and the first loop iteration; even a currently fixed input gate does not make a branch-only output unconditional. LOOP exit expressions can read body results. Input declarations/required values are not statically checked because `--var` can supply them later. Previously these structural mistakes failed during execution; CLI commands now fail before creating a run or calling an executor. Direct `runWorkflow` library callers retain runtime checks.
+The optional `"common"` text in `awe.json` (a string, or an array of lines) is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context, so it can use `{{ input.* }}` but not step outputs. Editing it makes every cached step stale (see [Common text](docs/cli.md#common-text-common-in-awejson)). A v0.1 `ENTRY.md` still works as a deprecated stand-in, with a warning; its content used to be passed through verbatim, so a literal `{{ ... }}` there now needs escaping as `\{{`.
 
 Input and step-output values are inserted verbatim, including any `{{ ... }}` they contain. To write literal braces in template source, escape the opening delimiter: `\{{first_name}}` renders as `{{first_name}}`, and `$\{{ secrets.X }}` renders as `${{ secrets.X }}`. In JSON strings, write the backslash as `\\`. An unescaped unsupported or unclosed expression is an `INVALID_TEMPLATE` error.
 

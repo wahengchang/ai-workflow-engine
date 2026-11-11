@@ -28,7 +28,7 @@ function commandSpec(value, where) {
 // Validation of names that depend on the workflow (step ids) happens in the callers that know the tree.
 export function normalizeConfig(config) {
   const warnings = [];
-  const settings = { input: config.input ?? {}, run: null, timeoutMs: undefined, executors: new Map(), steps: {}, removedEcho: false, warnings, storePrompts: config.storePrompts };
+  const settings = { common: undefined, input: config.input ?? {}, run: null, timeoutMs: undefined, executors: new Map(), steps: {}, removedEcho: false, warnings, storePrompts: config.storePrompts };
   assertAwe(settings.input && typeof settings.input === 'object' && !Array.isArray(settings.input), 'INVALID_CONFIG', 'awe.json "input" must be an object');
 
   if (config.executor !== undefined) {
@@ -51,6 +51,12 @@ export function normalizeConfig(config) {
     warnings.push(`awe.json uses the deprecated "executor" block. Replace it with: ${suggestion}`);
   }
 
+  if (config.common !== undefined) {
+    const lines = config.common;
+    assertAwe(typeof lines === 'string' || (Array.isArray(lines) && lines.every(line => typeof line === 'string')), 'INVALID_CONFIG',
+      'awe.json "common" must be a string, or an array of lines. It is added to the prompt of every step.');
+    settings.common = Array.isArray(lines) ? lines.join('\n') : lines;
+  }
   if (config.run !== undefined) settings.run = commandSpec(config.run, 'run');
   if (config.timeout !== undefined) settings.timeoutMs = seconds(config.timeout, 'timeout');
 

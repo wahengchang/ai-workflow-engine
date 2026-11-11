@@ -206,5 +206,6 @@ awe: warning: awe.json uses the deprecated "executor" block. Replace it with: "r
 - `awe check` 不因 executor 缺少而失敗。
 - run 標頭寫 `(N steps in plan)`；有 LOOP 重複時，摘要的計數單位改為 `step runs`，避免同一份輸出裡「step」指兩種東西。
 - 執行命令的顯示會保留 workflow 內存在的檔案（例如 `node agent.cjs`），讓兩個不同的 agent 看得出差別。
-- 重跑原因：cache 開啟時，非指定的步驟若重跑，會在該行註明原因（`(ENTRY.md changed)`、`(its prompt file changed)`…）；`awe check` 顯示 ENTRY.md 的長度；文件新增 ENTRY.md 一節（用途、使用時機、生命週期）。
+- 共用文字：移除 `ENTRY.md`，改為 `awe.json` 的 `"common"` 欄位（字串或行陣列），`awe.json` 取代 `ENTRY.md` 成為 workflow 根標記；舊的 `ENTRY.md` 仍可讀，會印棄用警告。理由：`ENTRY.md` 同時承擔「每步附加文字」與「根標記」兩件事，名字又讓人以為是入口或第一步。
+- 重跑原因：cache 開啟時，非指定的步驟若重跑，會在該行註明原因（`(the common text changed)`、`(its prompt file changed)`…）；`awe check` 顯示 ENTRY.md 的長度；文件新增 ENTRY.md 一節（用途、使用時機、生命週期）。
 - 目錄探索：不含編號 prompt 或 `FLOW.json` 的資料夾視為 scratch 並忽略，不再讓執行過程產生的資料夾使後續所有命令失敗。
