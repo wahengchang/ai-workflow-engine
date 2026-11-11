@@ -5,7 +5,7 @@ import { flatten } from './discover.js';
 // and awe run --dry so both build byte-identical prompts.
 export function buildPrompt(entry, source, context, node) {
   const compiled = renderTemplate(source, context, node.relative);
-  const common = entry.common?.trim() ? renderTemplate(entry.common, context, `${entry.commonLabel} (while preparing step ${node.id})`) : '';
+  const common = entry.common?.trim() ? renderTemplate(entry.common.trim(), context, `${entry.commonLabel} (while preparing step ${node.id})`) : '';
   const head = common ? `# Common instructions\n${common}\n\n` : '';
   return `${head}# Step ${node.id} (${node.relative})\n${compiled}\n`;
 }

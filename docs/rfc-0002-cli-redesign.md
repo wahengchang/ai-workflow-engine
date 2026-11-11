@@ -2,7 +2,7 @@
 
 Status: **IMPLEMENTED** (v0.2). User documentation: [cli.md](cli.md). Where the implementation differs from the first proposal, the text below has been updated and the difference is listed in §11.
 取代：v0.1 的 CLI 介面（`run` / `simulate` / `dev` 三套並存、11 個 flag）。
-不變：workflow 檔案格式（`ENTRY.md`、編號 `.md`、`FLOW.json`、`{{ steps["1.1"].output }}`）。
+不變：workflow 檔案格式（編號 `.md`、`FLOW.json`、`{{ steps["1.1"].output }}`）。後來決定移除 `ENTRY.md`，由 `awe.json` 負責根標記與共用文字（見 §11）。
 
 ## 1. 要解決的問題
 
@@ -34,7 +34,7 @@ awe show [dir] [step] [options]    看結果（取代 status / inspect / explain
 awe check [dir]                    validate + plan + 檢查 executor 是否可用（取代 validate / plan / doctor）
 ```
 
-- `dir` 省略時為目前目錄，並**往上層尋找 `ENTRY.md`**，所以在子資料夾裡也能跑。
+- `dir` 省略時為目前目錄，並**往上層尋找 `awe.json`**（最初的提案是 `ENTRY.md`），所以在子資料夾裡也能跑。
 - `step` 是形如 `1.2`、`3.1.2`、`2.1.1@2`（LOOP 第 2 圈；巢狀 LOOP 由外到內依序列出，如 `1.1.2.1@2.1`）的位址。`dir` 與 `step` 靠格式區分，因此在 workflow 裡直接 `awe run 1.2` 即可。
 - 全部命令都支援 `--json`。
 
@@ -129,7 +129,7 @@ $ awe run
 Cache     off — full run from 1.1 (use --cache to reuse valid steps)
 ```
 
-失效判定沿用 [cli.md](cli.md#cache) 所述的指紋規則：prompt、`ENTRY.md`、input、executor、上游結果任一改變，該步與其後的步驟失效；
+失效判定沿用 [cli.md](cli.md#cache) 所述的指紋規則：prompt、共用文字（`common`）、input、executor、上游結果任一改變，該步與其後的步驟失效；
 一旦某步重跑失敗，不會悄悄退回舊的成功結果。run 與 dev 合併成**同一套**儲存，不再有分開的 session。
 
 ## 6. 錯誤與提示範例
@@ -144,7 +144,7 @@ awe: no executor configured. Add one to awe.json, e.g.
   1.1     FAILED  Command timed out after 120s. Raise it with --timeout <seconds> or "timeout" in awe.json.
           … searching "arabica vs robusta" (23 of ?)
 Next  awe run 1.1 --timeout 240    (limit now 120s)   ·   awe show 1.1 --err
-awe: Not inside a workflow (no ENTRY.md in /repo or its parents).
+awe: Not inside a workflow (no awe.json in /repo or its parents).
 Next: cd into a workflow, pass its folder (awe run <dir>), or create one with: awe init <dir>
 ```
 
@@ -207,5 +207,6 @@ awe: warning: awe.json uses the deprecated "executor" block. Replace it with: "r
 - run 標頭寫 `(N steps in plan)`；有 LOOP 重複時，摘要的計數單位改為 `step runs`，避免同一份輸出裡「step」指兩種東西。
 - 執行命令的顯示會保留 workflow 內存在的檔案（例如 `node agent.cjs`），讓兩個不同的 agent 看得出差別。
 - 共用文字：移除 `ENTRY.md`，改為 `awe.json` 的 `"common"` 欄位（字串或行陣列），`awe.json` 取代 `ENTRY.md` 成為 workflow 根標記；舊的 `ENTRY.md` 仍可讀，會印棄用警告。理由：`ENTRY.md` 同時承擔「每步附加文字」與「根標記」兩件事，名字又讓人以為是入口或第一步。
+- `common` 的寫法：目前只支援字串或行陣列。審閱意見指出，多行 Markdown 規則放進 JSON 要跳脫引號、diff 也比檔案難讀；替代方案是另加 `commonFile`（相對路徑、限 workflow 內、不在 `.awe` 下）。決定先不做，因為最初的方向是移除這個檔案；若實際使用中常有超過約十行的共用規則，再以 `commonFile` 補上，不影響現有格式。
 - 重跑原因：cache 開啟時，非指定的步驟若重跑，會在該行註明原因（`(the common text changed)`、`(its prompt file changed)`…）；`awe check` 顯示 ENTRY.md 的長度；文件新增 ENTRY.md 一節（用途、使用時機、生命週期）。
 - 目錄探索：不含編號 prompt 或 `FLOW.json` 的資料夾視為 scratch 並忽略，不再讓執行過程產生的資料夾使後續所有命令失敗。

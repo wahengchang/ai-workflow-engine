@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile, readdir } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { workspace, put, run, calls, countByStep, agentCommand } from '../fixtures/helpers.mjs';
@@ -357,7 +357,7 @@ test('"common" is the text every step shares: a string or lines, optional, rende
   assert.ok(!(await cli(['check', ws.dir], ws.dir)).output.includes('Common '), 'check mentions it only when there is one');
   // size
   await withCommon(ws, { common: 'x'.repeat(50) });
-  assert.match((await cli(['check', ws.dir], ws.dir)).output, /^Common {4}50 characters \(awe\.json "common"\), added to the prompt of every step$/m);
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /^Common {4}50 characters \("common" in awe\.json\), added to the prompt of every step$/m);
   assert.deepEqual(JSON.parse((await cli(['check', ws.dir, '--json'], ws.dir)).output).common, { characters: 50, addedToSteps: 3 });
   await withCommon(ws, { common: 'x'.repeat(4500) });
   assert.match((await cli(['check', ws.dir], ws.dir)).output, /4500 characters.*That is large: every step pays for it, and any edit reruns every step/);
@@ -377,13 +377,13 @@ test('awe.json marks the workflow root; the v0.1 ENTRY.md still works, with a wa
   await put(bare, '1.1-a.md', 'x');
   await assert.rejects(cli(['check', bare]), { code: 'WORKFLOW_NOT_FOUND', message: /Not inside a workflow \(no awe\.json in .*awe init <dir>.*\{"version": 2\}/s });
   await put(bare, 'awe.json', '{"version": 2}');
-  assert.match((await cli(['check', bare])).output, /^VALID .*\(1 prompt steps\)/);
+  assert.match((await cli(['check', bare])).output, new RegExp(`^VALID ${path.basename(bare)} \\(1 prompt steps\\)`), 'the workflow is named, not "."');
 
   const legacy = await workspace(t, steps);
   await put(legacy.dir, 'ENTRY.md', 'Legacy rules.');
   const checked = await cli(['check', legacy.dir], legacy.dir);
   assert.deepEqual(checked.warnings, ['ENTRY.md is deprecated. Move its text into awe.json as "common" (a string, or an array of lines), then delete the file.']);
-  assert.match(checked.output, /^Common {4}13 characters/m);
+  assert.match(checked.output, /^Common {4}13 characters \(ENTRY\.md\)/m, 'the line says where the text came from');
   const dry = JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output);
   assert.match(dry.steps[0].prompt, /^# Common instructions\nLegacy rules\.\n\n# Step 1\.1 /);
   await withCommon(legacy, { common: 'New rules.' });
@@ -411,4 +411,24 @@ test('a nested awe.json is reported and ignored; no step is dropped silently', a
   // A folder called just "2" holding prompts must be rejected, never skipped.
   const bare = await workspace(t, { '1.1.md': 'one', '2/2.1.md': 'two-one' });
   await assert.rejects(cli(['check', bare.dir], bare.dir), { code: 'INVALID_STEP', message: /Directory needs a numeric prefix or stage-N name: 2\. .*for example stage-2\)/ });
+});
+
+test('a legacy ENTRY.md that ends with a newline adds no extra blank line to the prompt', async t => {
+  const legacy = await workspace(t, steps);
+  await put(legacy.dir, 'ENTRY.md', 'Legacy rules.\n\n');
+  const prompt = JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output).steps[0].prompt;
+  assert.equal(prompt, '# Common instructions\nLegacy rules.\n\n# Step 1.1 (1.1-a.md)\nOUTPUT::a#{n}\n');
+});
+
+test('a result written by an older awe is rerun with an honest reason', async t => {
+  const ws = await workspace(t, steps);
+  await cli(['run', ws.dir, '1.1'], ws.dir);
+  // Simulate a record from an older awe: an old-style fingerprint and no per-part digests.
+  const cacheDir = path.join(ws.dir, '.awe', 'cache');
+  const [session] = (await readdir(cacheDir)).filter(name => name.startsWith('cache-'));
+  const file = path.join(cacheDir, session, 'session.json');
+  const data = JSON.parse(await readFile(file, 'utf8'));
+  for (const record of Object.values(data.records)) if (record.latest) { delete record.latest.parts; record.latest.fingerprint = 'written-by-an-older-awe'; }
+  await writeFile(file, JSON.stringify(data));
+  assert.match((await cli(['run', ws.dir, '1.2'], ws.dir)).output, /^ {2}1\.1 +ran +\S+ +\(written by an older awe\)/m);
 });

@@ -219,7 +219,8 @@ walking up. `"common"` is the optional text every step shares: who the AI is wor
 | **Not** | a README for people (everything in it is sent, and paid for, on every step) and not a place for values that change per run (use `input`). |
 
 Every step is its own AI call with no memory of the others, so the common text is sent with each one: a hundred steps send it
-a hundred times, once per call, never accumulating. Keep it to a few lines.
+a hundred times, once per call, never accumulating. Keep it short because every step pays for it, not because of how it is
+written.
 
 Lifecycle:
 
@@ -385,4 +386,5 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `ENTRY.md` (root marker and text added to every prompt) | `awe.json` marks the root; the shared text is its `"common"` field. `ENTRY.md` still works, with a deprecation warning |
 
 The old `executor: { type, argv, timeoutMs }` block in `awe.json` still works and prints a deprecation warning with the
-replacement; `"type": "echo"` no longer exists. Old `.awe/runs` and `.awe/dev` folders are neither read nor deleted.
+replacement; `"type": "echo"` no longer exists. Old `.awe/runs` and `.awe/dev` folders are neither read nor deleted; `.awe/dev` (the v0.1 cache) is no longer used and is safe
+to delete.

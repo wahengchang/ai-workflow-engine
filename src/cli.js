@@ -229,8 +229,8 @@ async function checkCommand({ dir, flags }, cwd) {
   const commonChars = (entry.common ?? '').trim().length;
   const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, addedToSteps: commonChars ? promptIds.length : 0 }, promptSteps: promptIds.length, plan, executors: used };
   if (flags.json) return { output: JSON.stringify(result, null, 2), code: 0, warnings };
-  const lines = [`VALID ${path.relative(cwd, entry.root) || '.'} (${promptIds.length} prompt steps)`];
-  if (commonChars) lines.push(`Common    ${commonChars} characters (awe.json "common"), added to the prompt of every step${commonChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`);
+  const lines = [`VALID ${path.basename(entry.root)} (${promptIds.length} prompt steps)`];
+  if (commonChars) lines.push(`Common    ${commonChars} characters (${entry.commonLabel}), added to the prompt of every step${commonChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`);
   lines.push(prettyPlan(plan), '');
   for (const item of used) {
     if (!item.display) lines.push(`Executor  ${item.name}: NOT CONFIGURED`);

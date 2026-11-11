@@ -11,7 +11,8 @@ import { digestOf, secretDigest, sha256 } from './digest.js';
 import { assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs, filePaths, verifyStoredFile } from './outputs.js';
 import { openSession, workspaceSalt } from './cache.js';
 
-const FINGERPRINT_VERSION = 1;
+// Bump when the parts of a fingerprint change, so records written by an older awe are recognised.
+const FINGERPRINT_VERSION = 2;
 
 // ── Addresses ───────────────────────────────────────────────────────────────
 // A step ID names the prompt; an *occurrence* names which pass through enclosing LOOPs
@@ -317,7 +318,7 @@ const REASONS = [
 function whyRan(record, now) {
   if (!record.latest) return record.lastFailure ? 'its previous attempt failed' : 'not cached yet';
   const before = record.latest.parts;
-  if (!before) return undefined;
+  if (!before) return 'written by an older awe';
   const reasons = [...new Set(REASONS.filter(([key]) => before[key] !== now[key]).map(([, text]) => text))];
   if (!reasons.length && before.prompt !== now.prompt) reasons.push('its rendered prompt changed');
   return reasons.slice(0, 2).join(', ') || undefined;
