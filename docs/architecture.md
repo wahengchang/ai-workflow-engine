@@ -37,7 +37,7 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 
 ## Security and compatibility
 
-- The engine does not follow symlinked workflow entries during discovery.
+- The engine does not follow symlinked workflow entries during discovery. A folder that holds no numbered prompt and no `FLOW.json` (bounded scan) is treated as scratch space and ignored.
 - The command string in `awe.json` is split into arguments (`command.js`) and started through `spawn(..., shell:false)`, never a shell. `{prompt}` is substituted into one argument after splitting, so prompt text cannot inject arguments or shell syntax. It inherits the user's execution permissions.
 - **Only execute trusted workflows and binaries.** Prompts can instruct an external AI agent to call its own tools; AWE does not sandbox that agent.
 - Version 0.1 uses `FLOW.json` to avoid implementing a partial, ambiguous YAML parser. A future YAML adapter can be added without changing flow semantics.

@@ -384,8 +384,9 @@ async function walkPrompt(node, context, sh, scope) {
       context.steps[id] = resultEntry(record.latest, cached, ord);
       register(record.latest.resultId);
       const reused = { runId: record.latest.runId, attempt: record.latest.attempt, resultId: record.latest.resultId, at: record.latest.completedAt };
+      const sourcePrompt = typeof record.latest.prompt === 'string' ? path.join(sh.entry.root, '.awe', 'runs', record.latest.runId, record.latest.prompt) : undefined;
       state.invocations.push({ address, step: id, invocation, action: 'REUSED', status: 'COMPLETED', fingerprint, upstreamDigest, inputs, from: reused, resultId: record.latest.resultId, artifact: cached.artifact });
-      state.steps[id] = { attempts: state.steps[id]?.attempts ?? 0, status: 'COMPLETED', source: node.relative, reused, artifact: cached.artifact, outputPreview: cached.output.slice(0, 200), ...(cached.details ? { files: cached.details } : {}) };
+      state.steps[id] = { attempts: state.steps[id]?.attempts ?? 0, status: 'COMPLETED', source: node.relative, reused, ...(record.latest.executor ? { executor: record.latest.executor } : {}), ...(sourcePrompt ? { prompt: sourcePrompt } : {}), artifact: cached.artifact, outputPreview: cached.output.slice(0, 200), ...(cached.details ? { files: cached.details } : {}) };
       state.reused++;
       event(sh, 'STEP_REUSED', node, { address, ...reused });
       return false;
@@ -446,7 +447,8 @@ async function walkPrompt(node, context, sh, scope) {
     await hook(sh, 'beforeCommit', { address });
     // The commit is the only thing that makes a result reusable, and it is a single atomic file replace.
     await session.commit(address, {
-      resultId, runId: state.runId, attempt, fingerprint, completedAt: finishedAt,
+      resultId, runId: state.runId, attempt, fingerprint, completedAt: finishedAt, executor: executor.name,
+      ...(keepPrompt && promptFile ? { prompt: path.relative(sh.store.dir, promptFile) } : {}),
       artifact: { path: path.relative(sh.store.dir, artifact), sha256: sha256(bytes), size: bytes.length },
       ...(files ? { files: Object.fromEntries(Object.entries(files).map(([name, file]) => [name, { ...file, path: path.relative(sh.store.dir, file.path) }])) } : {}),
     });

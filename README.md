@@ -69,7 +69,7 @@ my-content-workflow/
     └── 3.2-deliver.md
 ```
 
-All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
+All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches; a folder with no numbered prompts or `FLOW.json` (scratch space a step created) is ignored. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
 
 ### Flow syntax
 

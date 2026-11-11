@@ -33,7 +33,7 @@ Every `awe run` prints what it did:
 
 ```text
 $ awe run 1.2
-Workflow  coffee (6 steps)    Executor  claude -p {prompt}
+Workflow  coffee (6 steps in plan)    Executor  claude -p {prompt}
 Cache     on — upstream reused, 1.2 always runs (--no-cache reruns everything)
 
   1.1     cached   14:02
@@ -80,8 +80,9 @@ Common commands:
 `awe init` writes the first of `claude`, `codex`, `opencode`, `omp` it finds on PATH. Without a command, `awe run` stops
 and shows these examples. It never pretends to have run; use `awe run --dry` to see what would be sent.
 
-Run lines and error messages show the executable and plain flags only; other arguments appear as `…` so a key passed
-on a command line never reaches your terminal or logs. Prefer environment variables for credentials.
+Run lines, `awe check` and error messages show the executable, plain flags, `{prompt}` and any file that exists inside
+the workflow (so `node agent.cjs {prompt}` shows which agent it is); other arguments appear as `…`, so a key passed on
+a command line never reaches your terminal or logs. Prefer environment variables for credentials.
 
 ### Different commands for different steps
 
@@ -195,6 +196,13 @@ Unchanged: `ENTRY.md` (prepended to every prompt), numbered `N.N-name.md` prompt
 `loop` groups, and `{{ input.x }}` / `{{ steps["1.1"].output }}` / `{{ steps["1.1"].artifact }}` /
 `{{ steps["1.1"].files["name"] }}` references. See the [README](../README.md).
 
+A folder inside the workflow is part of it only if it is a numbered or `stage-N` folder, or holds a `FLOW.json` or a numbered
+prompt somewhere below. Any other folder (`out/`, `state/`, a `notes/` folder of plain Markdown that a step created) is
+ignored, so scratch space written by a command never turns a working workflow into one that cannot be checked or run. A
+folder that does hold numbered prompts but is not itself numbered fails with `INVALID_STEP` and says how to rename it. Plain
+files are different: a non-numbered `.md` file in a workflow folder is still an error, so declare files a step writes
+there under `steps.<id>.outputs`, or write them into a dot-folder such as `.state/`.
+
 ## Output files
 
 Besides text, a step can produce files such as PDFs or images. Declare them per step in `awe.json`:
@@ -280,7 +288,8 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 - The cache identity trusts the command line as written; the behaviour of the program it launches is not versioned.
 - The lock uses process IDs, so it protects one machine only.
 - Mid-step output is not resumable: an interrupted step runs again from its start.
-- Nothing prunes `.awe/runs` or `.awe/cache`, and every run that executes steps writes new artifacts, prompts and saved files. Delete `.awe/` (or just `.awe/runs/<old runs>`) when it grows; the next run starts a fresh cache.
+- Nothing prunes `.awe/runs` or `.awe/cache`, and every run that executes steps writes new artifacts, prompts and saved files (a whole run ignores the cache by default, so it rewrites the same artifacts under a new run id). Delete `.awe/` to reclaim space; the next run starts a fresh cache. Cached results point into the run folders that produced them, so deleting only some old runs is safe but makes the steps that lived there run again.
+- A step inside a `loop` cannot see which iteration it is in: there is no `{{ loop.iteration }}`. `@n` addresses an iteration from the outside (`awe run 2.1.1@2`), but a prompt that should behave differently in round 2 has to read the previous step's output. A template variable for it is a possible follow-up, not part of v0.2.
 - There is no built-in search or token budget. Put one in your prompt ("at most 5 searches") and give slow, tool-using
   steps a longer `timeout`.
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { workspace, put, run, calls, countByStep, agentCommand } from '../fixtures/helpers.mjs';
@@ -16,7 +16,7 @@ const steps = {
 test('run prints the cache mode, one line per step, the counts and a next step', async t => {
   const ws = await workspace(t, steps);
   const first = (await cli(['run', ws.dir, '1.1'], ws.dir)).output;
-  assert.match(first, /^Workflow {2}\S+ \(3 steps\) {4}Executor {2}\S*node\S* … …$/m, 'arguments other than plain flags are hidden');
+  assert.match(first, /^Workflow {2}\S+ \(3 steps in plan\) {4}Executor {2}\S*node\S* … …$/m, 'arguments other than plain flags are hidden');
   assert.match(first, /^Cache {5}on — upstream reused, 1\.1 always runs \(--no-cache reruns everything\)$/m);
   assert.match(first, /^ {2}1\.1 +ran +\S+ +-> \.awe[\\/]runs[\\/]/m);
   assert.match(first, /Reused 0 steps · Ran 1 step/);
@@ -44,7 +44,7 @@ test('a failing step shows the reason, the last stderr lines and the command to 
   const result = await cli(['run', ws.dir], ws.dir);
   assert.equal(result.code, 1);
   assert.match(result.output, /^ {2}1\.2 +FAILED +Command exited 3: blocked by block\.flag$/m);
-  assert.match(result.output, /^ {10}blocked by block\.flag$/m, 'stderr tail is printed under the step');
+  assert.equal(result.output.match(/blocked by block\.flag/g).length, 1, 'a one-line stderr is not printed twice');
   assert.match(result.output, /^Next {2}awe show 1\.2 --err {3}· {3}awe run 1\.2$/m);
   assert.equal((await cli(['show', ws.dir, '1.2', '--err'])).output, 'blocked by block.flag');
   assert.match((await cli(['show', ws.dir])).output, /Status {2}FAILED — EXECUTOR_FAILED: Command exited 3/);
@@ -257,4 +257,69 @@ test('a failing step with a prompt over 32 KB reports EXECUTOR_FAILED instead of
   await rm(path.join(ws.dir, 'block.flag'));
   const again = JSON.parse((await cli(['run', ws.dir, '--json'], ws.dir)).output);
   assert.equal(again.error.code, 'EXECUTOR_FAILED');
+});
+
+test('stderr lines that the failure message does not already quote are printed under the step', async t => {
+  const ws = await workspace(t, { '1.1-a.md': 'OUTPUT::a' });
+  await put(ws.dir, 'noisy.cjs', "for (let i = 1; i <= 3; i++) console.error('line ' + i); process.exit(3);");
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${JSON.stringify(process.execPath)} noisy.cjs` }));
+  const out = (await cli(['run', ws.dir], ws.dir)).output;
+  assert.match(out, /^ {2}1\.1 +FAILED +Command exited 3: line 1$/m);
+  assert.match(out, /^ {10}line 2\n {10}line 3$/m);
+  assert.equal(out.match(/line 1/g).length, 1);
+});
+
+test('the summary uses one vocabulary: steps in the plan, step runs when a loop repeats', async t => {
+  const loop = await workspace(t, {
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/1.1.1-draft.md': 'OUTPUT::draft#{n}',
+    '1.1-loop/1.1.2-gate.md': 'PASS_IF_NUM_GTE::2::{{ steps["1.1.1"].output }}',
+    '1.2-after.md': 'OUTPUT::done',
+  });
+  const out = (await cli(['run', loop.dir], loop.dir)).output;
+  assert.match(out, /\(3 steps in plan\)/);
+  assert.match(out, /^Reused 0 step runs · Ran 5 step runs {3}\(a step inside a loop counts once per iteration\)$/m);
+  const plain = await workspace(t, steps);
+  assert.match((await cli(['run', plain.dir], plain.dir)).output, /^Reused 0 steps · Ran 3 steps$/m, 'no loop, no parenthetical');
+});
+
+test('check and the run header show the script a command runs when it lives in the workflow', async t => {
+  const ws = await workspace(t, steps);
+  await put(ws.dir, 'agent.cjs', 'process.stdin.pipe(process.stdout);');
+  await put(ws.dir, 'other-agent.cjs', 'process.stdin.pipe(process.stdout);');
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${JSON.stringify(process.execPath)} agent.cjs --api-key=sk-secret-123 {prompt}` }));
+  const checked = (await cli(['check', ws.dir], ws.dir)).output;
+  assert.match(checked, /^Executor {2}run: \S+ agent\.cjs … {prompt} {3}\(found: /m);
+  assert.ok(!checked.includes('sk-secret-123'));
+  assert.match((await cli(['run', ws.dir, '1.1'], ws.dir)).output, /Executor {2}\S+ agent\.cjs … \{prompt\}/);
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${JSON.stringify(process.execPath)} other-agent.cjs {prompt}` }));
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /run: \S+ other-agent\.cjs \{prompt\}/, 'two agents no longer look the same');
+  // A path outside the workflow, or one that does not exist, stays hidden.
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${JSON.stringify(process.execPath)} ../outside.cjs missing.cjs {prompt}` }));
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /run: \S+ … … \{prompt\}/);
+});
+
+test('a reused step keeps its executor and prompt in the run state and in show --json', async t => {
+  const ws = await workspace(t, steps);
+  await cli(['run', ws.dir, '1.1'], ws.dir);
+  const state = JSON.parse((await cli(['run', ws.dir, '1.2', '--json'], ws.dir)).output);
+  assert.equal(state.steps['1.1'].reused.attempt, 1);
+  assert.equal(state.steps['1.1'].executor, 'run');
+  assert.match(await readFile(state.steps['1.1'].prompt, 'utf8'), /# Step 1\.1 /);
+  const shown = JSON.parse((await cli(['show', ws.dir, '1.1', '--json'], ws.dir)).output);
+  assert.equal(shown.attempts, 1);
+  assert.equal(shown.executor, 'run');
+});
+
+test('a folder a step creates as scratch space does not break later commands', async t => {
+  const ws = await workspace(t, steps);
+  for (const [name, text] of [['out/report.pdf', 'x'], ['state/revision.md', '# notes'], ['notes/todo.md', 'x'], ['data/deep/er/file.txt', 'x']]) await put(ws.dir, name, text);
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /VALID .*\(3 prompt steps\)/);
+  assert.equal((await cli(['run', ws.dir, '1.1'], ws.dir)).code, 0);
+  // A folder that holds numbered prompts or a FLOW.json is workflow content, and keeps failing loudly.
+  await put(ws.dir, 'drafts/1.9-x.md', 'x');
+  await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'INVALID_STEP', message: /drafts\. It contains workflow files, so rename it \(for example stage-1-drafts\)/ });
+  await rm(path.join(ws.dir, 'drafts'), { recursive: true });
+  await put(ws.dir, 'extra/FLOW.json', '{"type":"parallel"}');
+  await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'INVALID_STEP' });
 });

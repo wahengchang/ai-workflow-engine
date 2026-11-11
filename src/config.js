@@ -88,7 +88,7 @@ export function noExecutorError(settings) {
 }
 
 // Priority: CLI flag > steps.<id> > named executor > top level.
-export function resolveExecutor(settings, stepId, overrides = {}) {
+export function resolveExecutor(settings, stepId, overrides = {}, root) {
   const name = overrides.executor ?? settings.steps[stepId]?.executor ?? 'run';
   const base = name === 'run' ? settings.run : settings.executors.get(name);
   if (!base) {
@@ -97,5 +97,5 @@ export function resolveExecutor(settings, stepId, overrides = {}) {
   }
   const timeoutMs = overrides.timeoutSeconds !== undefined ? Math.round(overrides.timeoutSeconds * 1000)
     : settings.steps[stepId]?.timeoutMs ?? base.timeoutMs ?? settings.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
-  return { name, argv: base.argv, display: displayCommand(base.argv), timeoutMs };
+  return { name, argv: base.argv, display: displayCommand(base.argv, root), timeoutMs };
 }

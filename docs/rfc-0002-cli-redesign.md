@@ -204,3 +204,6 @@ awe: warning: awe.json uses the deprecated "executor" block. Replace it with: "r
 - 群組位址（例如 PARALLEL 的 `3.1`）不是步驟，錯誤訊息列出群組內可執行的步驟；PARALLEL 內的單一步驟（`3.1.1`）可以直接執行。
 - 提案中的 `show --prompt` 路徑改為既有的 `artifacts/prompt-<step>-attempt-<n>.md`，並且預設保存。
 - `awe check` 不因 executor 缺少而失敗。
+- run 標頭寫 `(N steps in plan)`；有 LOOP 重複時，摘要的計數單位改為 `step runs`，避免同一份輸出裡「step」指兩種東西。
+- 執行命令的顯示會保留 workflow 內存在的檔案（例如 `node agent.cjs`），讓兩個不同的 agent 看得出差別。
+- 目錄探索：不含編號 prompt 或 `FLOW.json` 的資料夾視為 scratch 並忽略，不再讓執行過程產生的資料夾使後續所有命令失敗。

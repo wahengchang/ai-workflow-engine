@@ -185,10 +185,10 @@ function prettyPlan(plan) {
   return plan.map(p => `  ${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
 }
 
-function describeExecutors(settings, promptIds, overrides) {
+function describeExecutors(settings, promptIds, overrides, root) {
   const seen = new Map();
   for (const id of promptIds) {
-    const executor = resolveExecutor(settings, id, overrides);
+    const executor = resolveExecutor(settings, id, overrides, root);
     seen.set(executor.name, executor.display);
   }
   return seen.size === 1 ? [...seen.values()][0] : [...seen].map(([name, display]) => `${name}=${display}`).join(' · ');
@@ -219,7 +219,7 @@ async function checkCommand({ dir, flags }, cwd) {
     const spec = name === 'run' ? entry.settings.run : entry.settings.executors.get(name);
     if (!spec) { executors.push({ name, display: null, executable: null, found: null }); continue; }
     const found = await findExecutable(spec.argv[0], { cwd: entry.root });
-    executors.push({ name, display: resolveExecutor(entry.settings, '', { executor: name }).display, executable: spec.argv[0], found });
+    executors.push({ name, display: resolveExecutor(entry.settings, '', { executor: name }, entry.root).display, executable: spec.argv[0], found });
   }
   const used = executors.filter(item => item.name !== 'run' || promptIds.some(id => (entry.settings.steps[id]?.executor ?? 'run') === 'run'));
   const problems = used.filter(item => !item.display || !item.found);
@@ -267,7 +267,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
   if (flags.json) return { output: JSON.stringify(state, null, 2), code, warnings };
 
   const lines = [
-    `Workflow  ${path.basename(entry.root)} (${promptIds.length} steps)    Executor  ${describeExecutors(entry.settings, promptIds, overrides)}`,
+    `Workflow  ${path.basename(entry.root)} (${promptIds.length} steps in plan)    Executor  ${describeExecutors(entry.settings, promptIds, overrides, entry.root)}`,
     `Cache     ${cacheLine(state)}`,
     '',
     ...renderSteps(state, entry.root),

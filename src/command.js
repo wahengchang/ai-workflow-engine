@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import path from 'node:path';
 import { AweError } from './errors.js';
 
 // Splits a command string from awe.json into argv. Quote-aware, but it never involves a shell:
@@ -56,10 +58,24 @@ export const usesPlaceholder = argv => argv.some(token => /\{prompt_file\}|\{pro
 // redacted from error text and hidden when the command is shown.
 export const isPlainToken = token => token.length <= 3 || /^-{1,2}[A-Za-z][\w-]*$/.test(token) || /^[a-z]{1,5}$/.test(token);
 
-// Shown back to people (run header, awe check). The executable and plain tokens are shown; other
-// arguments become "…" so credentials passed on the command line never reach the terminal or logs.
-export const displayCommand = argv => argv.map((token, index) => {
-  if (index === 0 || isPlainToken(token) || /^(\{prompt\}|\{prompt_file\})$/.test(token)) return token;
+// A path that names an existing file inside the workflow (the agent script of `node agent.cjs`) is not a
+// credential, and it is what tells two commands apart.
+const workflowFile = (token, root) => {
+  if (!root) return false;
+  try {
+    const absolute = path.resolve(root, token);
+    const relative = path.relative(root, absolute);
+    return !relative.startsWith('..') && !path.isAbsolute(relative) && statSync(absolute).isFile();
+  } catch {
+    return false;
+  }
+};
+
+// Shown back to people (run header, awe check). The executable, plain tokens and files inside the
+// workflow are shown; other arguments become "…" so credentials passed on the command line never
+// reach the terminal or logs.
+export const displayCommand = (argv, root) => argv.map((token, index) => {
+  if (index === 0 || isPlainToken(token) || /^(\{prompt\}|\{prompt_file\})$/.test(token) || workflowFile(token, root)) return token;
   return '…';
 }).join(' ');
 

@@ -63,14 +63,25 @@ export function renderSteps(state, root) {
       lines.push(`  ${name} RUNNING`);
     } else {
       lines.push(`  ${name} ${item.status}  ${firstLine(item.error?.message ?? '')}`.trimEnd());
-      if (item.stderrTail) lines.push(indent(item.stderrTail, 10));
+      if (item.stderrTail) {
+        // The failure message already quotes the start of stderr; do not print that line twice.
+        const tail = item.stderrTail.split('\n');
+        if (firstLine(item.error?.message ?? '').endsWith(tail[0])) tail.shift();
+        if (tail.length) lines.push(indent(tail.join('\n'), 10));
+      }
     }
   }
   return lines;
 }
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-export const countsLine = state => `Reused ${plural(state.reused ?? 0, 'step')} · Ran ${plural(state.executed ?? 0, 'step')}`;
+// One vocabulary: when a LOOP made some step run more than once, the counts are runs of a step, not steps.
+export function countsLine(state) {
+  const items = state.invocations ?? [];
+  const repeats = items.length > new Set(items.map(item => item.step)).size;
+  const word = repeats ? 'step run' : 'step';
+  return `Reused ${plural(state.reused ?? 0, word)} · Ran ${plural(state.executed ?? 0, word)}${repeats ? '   (a step inside a loop counts once per iteration)' : ''}`;
+}
 
 export function cacheLine(state) {
   const target = state.target?.address;
@@ -160,7 +171,7 @@ export async function show(root, { step, occurrence, runId, prompt = false, err 
   if (json) return { output: JSON.stringify({ run: holder.runId, step, ...found }, null, 2), code: 0 };
   if (prompt) {
     if (!found.prompt) throw new AweError('PROMPT_NOT_STORED', `The prompt of step ${step} was not saved ("storePrompts": false in awe.json). Preview it with: awe run ${step} --dry`);
-    return { output: (await readFile(found.prompt, 'utf8')).trimEnd(), code: 0 };
+    return { output: (await readFile(found.prompt, 'utf8').catch(() => { throw new AweError('PROMPT_NOT_STORED', `The prompt file of step ${step} no longer exists (${found.prompt}); it was deleted with an old run. Preview it with: awe run ${step} --dry`); })).trimEnd(), code: 0 };
   }
   if (err) return { output: found.stderrTail ?? '', code: 0 };
   return { output: (await readFile(found.artifact, 'utf8')).trimEnd(), code: 0 };
