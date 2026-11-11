@@ -7,11 +7,11 @@ import { fileURLToPath } from 'node:url';
 import { loadEntry } from '../src/entry.js';
 import { discoverWorkflow } from '../src/discover.js';
 import { renderTemplate } from '../src/template.js';
-import { startRun } from '../src/runtime.js';
+import { runWorkflow } from '../src/engine.js';
 import { cli } from '../src/cli.js';
 
 const fakeAgent = path.join(path.dirname(path.dirname(fileURLToPath(import.meta.url))), 'fixtures', 'fake-agent.cjs');
-const executor = { type: 'command', argv: [process.execPath, fakeAgent], timeoutMs: 3000 };
+const executor = { name: 'run', argv: [process.execPath, fakeAgent], display: 'fake agent', timeoutMs: 3000 };
 
 async function fixture(t, files) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'awe-test-'));
@@ -27,7 +27,7 @@ async function fixture(t, files) {
 async function run(dir, opts = {}) {
   const entry = await loadEntry(dir);
   const tree = await discoverWorkflow(dir);
-  return startRun(entry, tree, { executor, ...opts });
+  return runWorkflow(entry, tree, { resolveExecutor: () => executor, ...opts });
 }
 
 test('sequential numeric ordering and explicit input/output references', async t => {
@@ -122,17 +122,19 @@ test('renderTemplate does not evaluate arbitrary JavaScript', () => {
   assert.throws(() => renderTemplate('{{ process.exit() }}', { input: {}, steps: {} }), { code: 'INVALID_TEMPLATE' });
 });
 
-test('CLI plan/validate and run save a discoverable run', async t => {
-  const dir = await fixture(t, { '1.1-write.md': 'OUTPUT::hello' });
-  const plan = await cli(['plan', dir]);
-  assert.match(plan.output, /1\.1/);
-  const valid = await cli(['validate', dir]);
-  assert.match(valid.output, /VALID/);
-  const result = await cli(['run', dir, '--executor', 'command', '--command', process.execPath, '--arg', fakeAgent]);
+test('CLI check and run save a discoverable run', async t => {
+  const dir = await fixture(t, { '1.1-write.md': 'OUTPUT::hello', 'awe.json': JSON.stringify({ version: 2, run: `${JSON.stringify(process.execPath)} ${JSON.stringify(fakeAgent)}` }) });
+  const checked = await cli(['check', dir]);
+  assert.equal(checked.code, 0);
+  assert.match(checked.output, /VALID/);
+  assert.match(checked.output, /1\.1/);
+  const result = await cli(['run', dir]);
   assert.equal(result.code, 0);
-  const runId = /Run: (\S+)/.exec(result.output)[1];
-  const status = await cli(['status', runId], dir);
-  assert.match(status.output, /COMPLETED/);
-  const info = await cli(['inspect', runId, '--step', '1.1'], dir);
-  assert.match(info.output, /COMPLETED/);
+  assert.match(result.output, /1\.1 +ran/);
+  const shown = await cli(['show'], dir);
+  assert.match(shown.output, /COMPLETED/);
+  assert.equal((await cli(['show', '1.1'], dir)).output, 'hello');
+  // From a sub-folder of the workflow, awe finds the workflow by walking up.
+  await mkdir(path.join(dir, 'notes'));
+  assert.equal((await cli(['show', '1.1'], path.join(dir, 'notes'))).output, 'hello');
 });

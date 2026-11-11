@@ -40,14 +40,14 @@ try {
   const packed = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', temp]));
   assert.equal(packed.length, 1, 'npm pack should create exactly one tarball');
   const items = packed[0].files.map(f => f.path);
-  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/dev-mode.md', 'src/dev.js', 'src/dev-store.js', 'src/outputs.js', 'examples/content-generation/ENTRY.md']) {
+  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/cli.md', 'src/engine.js', 'src/cache.js', 'src/command.js', 'src/config.js', 'src/show.js', 'src/outputs.js', 'examples/content-generation/ENTRY.md']) {
     assert.ok(items.includes(expected), `Missing from npm package: ${expected}`);
   }
   const excluded = items.filter(p => /(^|\/)(\.awe|\.git|node_modules|test|fixtures|\.github|scripts|\.agents)(\/|$)/.test(p) || /(^|\/)(\.env|\.npmrc)(\.|$)/.test(p));
   assert.deepEqual(excluded, [], `Unexpected development or sensitive files in npm package: ${excluded.join(', ')}`);
   // Drafts and planning notes are not part of the product; only these docs ship.
   const docs = items.filter(p => p.startsWith('docs/')).sort();
-  assert.deepEqual(docs, ['docs/dev-mode.md', 'docs/installation.md', 'docs/maintenance.md'], 'Unexpected documents in npm package');
+  assert.deepEqual(docs, ['docs/cli.md', 'docs/installation.md', 'docs/maintenance.md'], 'Unexpected documents in npm package');
   assert.deepEqual(items.filter(p => /(^|\/)draf/i.test(p) || /\.(jsonl|log)$/.test(p) || /(^|\/)\.salt$/.test(p) || /session\.json$/.test(p)), [], 'Drafts or execution data in npm package');
 
   const prefix = path.join(temp, 'isolated');
@@ -55,13 +55,11 @@ try {
   runNpm(['install', '--prefix', prefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock', '--loglevel=error', tarball]);
   assert.match(runBin(prefix, ['--help']), /awe/i);
   const example = path.join(prefix, 'node_modules', '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation', 'ENTRY.md');
-  assert.match(runBin(prefix, ['validate', example]), /VALID/);
-  assert.match(runBin(prefix, ['plan', example]), /1\.1/);
+  assert.match(runBin(prefix, ['check', example]), /VALID/);
 
   // Exercise npm's actual bin resolution, not just node <installed>/bin/awe.js.
   assert.match(runNpm(['exec', '--prefix', prefix, '--offline', '--', 'awe', '--help'], temp), /awe/i);
-  assert.match(runNpm(['exec', '--prefix', prefix, '--offline', '--', 'awe', 'validate', example], temp), /VALID/);
-  assert.match(runNpm(['exec', '--prefix', prefix, '--offline', '--', 'awe', 'plan', example], temp), /1\.1/);
+  assert.match(runNpm(['exec', '--prefix', prefix, '--offline', '--', 'awe', 'check', example], temp), /VALID/);
 
   const globalPrefix = path.join(temp, 'global');
   runNpm(['install', '--global', '--prefix', globalPrefix, '--offline', '--ignore-scripts', '--no-audit', '--no-fund', tarball]);
@@ -70,7 +68,7 @@ try {
   assert.ok(existsSync(shim), 'Global npm install must create an awe command shim');
   const globalBin = path.join(globalModules, '@wahengchang', 'ai-workflow-engine', 'bin', 'awe.js');
   const globalExample = path.join(globalModules, '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation', 'ENTRY.md');
-  for (const args of [['--help'], ['validate', globalExample], ['plan', globalExample]]) {
+  for (const args of [['--help'], ['check', globalExample]]) {
     assert.ok(execFileSync(process.execPath, [globalBin, ...args], { cwd: temp, encoding: 'utf8' }).length);
   }
 
@@ -79,14 +77,12 @@ try {
   const linkedModules = process.platform === 'win32' ? path.join(linkPrefix, 'node_modules') : path.join(linkPrefix, 'lib', 'node_modules');
   const linkedBin = path.join(linkedModules, '@wahengchang', 'ai-workflow-engine', 'bin', 'awe.js');
   assert.match(execFileSync(process.execPath, [linkedBin, '--help'], { cwd: temp, encoding: 'utf8' }), /awe/i);
-  assert.match(execFileSync(process.execPath, [linkedBin, 'validate', path.join(root, 'examples/content-generation/ENTRY.md')], { cwd: temp, encoding: 'utf8' }), /VALID/);
-  assert.match(execFileSync(process.execPath, [linkedBin, 'plan', path.join(root, 'examples/content-generation/ENTRY.md')], { cwd: temp, encoding: 'utf8' }), /1\.1/);
+  assert.match(execFileSync(process.execPath, [linkedBin, 'check', path.join(root, 'examples/content-generation/ENTRY.md')], { cwd: temp, encoding: 'utf8' }), /VALID/);
 
   // A local tarball verifies scoped-package binary selection without claiming
   // that the package has been published to the npm registry.
   assert.match(runNpm(['exec', '--yes', '--offline', `--package=${tarball}`, '--', 'awe', '--help'], temp), /awe/i);
-  assert.match(runNpm(['exec', '--yes', '--offline', `--package=${tarball}`, '--', 'awe', 'validate', example], temp), /VALID/);
-  assert.match(runNpm(['exec', '--yes', '--offline', `--package=${tarball}`, '--', 'awe', 'plan', example], temp), /1\.1/);
+  assert.match(runNpm(['exec', '--yes', '--offline', `--package=${tarball}`, '--', 'awe', 'check', example], temp), /VALID/);
   console.log(`Distribution check passed (${items.length} files): packed, local/global installed, source linked, and npm exec launched awe offline.`);
 } finally {
   rmSync(temp, { recursive: true, force: true });

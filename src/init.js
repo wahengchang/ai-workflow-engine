@@ -14,10 +14,15 @@ const CONTENT_FILES = [
   'stage-3/3.2-deliver.md',
 ];
 
-export async function initWorkflow(destination, template = 'content') {
-  if (template !== 'content') throw new AweError('CLI_USAGE', `Unknown template: ${template}. Available: content`);
+// agent: an entry of KNOWN_AGENTS (or null). Its command becomes "run" in the new awe.json.
+export async function initWorkflow(destination, { agent = null } = {}) {
   const source = fileURLToPath(new URL('../examples/content-generation/', import.meta.url));
   const files = await Promise.all(CONTENT_FILES.map(async name => [name, await readFile(path.join(source, name), 'utf8')]));
+  if (agent) {
+    const entry = files.find(([name]) => name === 'awe.json');
+    const { version, ...rest } = JSON.parse(entry[1]);
+    entry[1] = `${JSON.stringify({ version, run: agent.run, ...rest }, null, 2)}\n`;
+  }
   await mkdir(path.dirname(destination), { recursive: true });
   try {
     await mkdir(destination);

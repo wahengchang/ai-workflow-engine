@@ -1,6 +1,6 @@
 # RFC 0002 — AWE CLI 從零重新設計
 
-Status: **PROPOSED / NOT IMPLEMENTED**
+Status: **IMPLEMENTED** (v0.2). User documentation: [cli.md](cli.md). Where the implementation differs from the first proposal, the text below has been updated and the difference is listed in §11.
 取代：v0.1 的 CLI 介面（`run` / `simulate` / `dev` 三套並存、11 個 flag）。
 不變：workflow 檔案格式（`ENTRY.md`、編號 `.md`、`FLOW.json`、`{{ steps["1.1"].output }}`）。
 
@@ -35,10 +35,10 @@ awe check [dir]                    validate + plan + 檢查 executor 是否可�
 ```
 
 - `dir` 省略時為目前目錄，並**往上層尋找 `ENTRY.md`**，所以在子資料夾裡也能跑。
-- `step` 是形如 `1.2`、`3.1.2`、`2.1.1@2`（LOOP 第 2 圈）的位址。`dir` 與 `step` 靠格式區分，因此在 workflow 裡直接 `awe run 1.2` 即可。
+- `step` 是形如 `1.2`、`3.1.2`、`2.1.1@2`（LOOP 第 2 圈；巢狀 LOOP 由外到內依序列出，如 `1.1.2.1@2.1`）的位址。`dir` 與 `step` 靠格式區分，因此在 workflow 裡直接 `awe run 1.2` 即可。
 - 全部命令都支援 `--json`。
 
-### `awe run` 的 flag（共 6 個）
+### `awe run` 的 flag（共 7 個，其中 `--retry` 只在中斷後復原時使用）
 
 | Flag | 說明 |
 | --- | --- |
@@ -47,6 +47,7 @@ awe check [dir]                    validate + plan + 檢查 executor 是否可�
 | `--dry` | 只渲染 prompt，不呼叫 executor、不寫 cache、不建立 run（取代 `simulate` 與 echo） |
 | `--executor <name>` | 使用 `awe.json` 裡具名的 executor，缺值時錯誤訊息列出所有名稱 |
 | `--timeout <seconds>` | 覆蓋這次的 timeout |
+| `--retry <step>` | 讓一個「結果未知」的步驟再跑一次（取代 `--acknowledge`） |
 | `--json` | 機器可讀輸出 |
 
 ### `awe show`
@@ -68,7 +69,7 @@ awe show --run <id>       指定某次 run，預設為最近一次
   "run": "claude -p {prompt}",
   "timeout": 300,
   "executors": {
-    "search": { "run": "omp -p --tools websearch {prompt}", "timeout": 900 }
+    "search": { "run": "omp -p", "timeout": 900 }
   },
   "steps": {
     "1.1": { "executor": "search" },
@@ -93,10 +94,10 @@ awe show --run <id>       指定某次 run，預設為最近一次
 | 都沒有 | prompt 從 stdin 送入 |
 
 prompt 本身是一份含變數的 md。AWE 會先把變數渲染完，存成
-`.awe/runs/<run-id>/prompts/<step>.md`，這份檔案就是 `show --prompt` 看到的內容。
-當它太長不適合放進參數，`{prompt}` 自動換成一句短指示：`Read and follow the instructions in <絕對路徑>`。使用者不需要自己寫 wrapper。
+`.awe/runs/<run-id>/artifacts/prompt-<step>-attempt-<n>.md`，這份檔案就是 `show --prompt` 看到的內容。預設會保存；`awe.json` 設 `"storePrompts": false` 時只在命令需要的那一刻保留。
+當它太長不適合放進參數（超過 64 KB；Windows 為 16 KB），`{prompt}` 自動換成一句短指示：`Read and follow the instructions in <絕對路徑>`。使用者不需要自己寫 wrapper。
 
-`awe init` 會偵測 PATH 上的 `claude` / `codex` / `opencode` / `omp`，把第一個找到的寫入 `run`；都沒有時 `run` 為空，`awe run` 會直接報錯並印出四種可貼上的範例。
+`awe init` 會偵測 PATH 上的 `claude` / `codex` / `opencode` / `omp`，把第一個找到的寫入 `run`（`omp` 寫成 `omp -p`，由 stdin 讀入）；都沒有時不寫 `run`，`awe run` 會直接報錯並印出四種可貼上的範例。預設 timeout 為 300 秒。
 
 ## 5. cache 規則
 
@@ -117,7 +118,7 @@ Workflow  coffee (6 steps)       Executor  claude -p {prompt}
 Cache     on — upstream reused, 1.2 always runs (use --no-cache to rerun everything)
 
   1.1  cached   14:02  (prompt unchanged)
-  1.2  ran      18s    -> .awe/runs/2026-11-11T…/artifacts/1.2.md
+  1.2  ran      18s    -> .awe/runs/2026-11-11T…/artifacts/1-2-attempt-1.md
 Reused 1 step · Ran 1 step
 Next  awe show 1.2   ·   awe run 1.3
 ```
@@ -134,24 +135,26 @@ Cache     off — full run from 1.1 (use --cache to reuse valid steps)
 
 ```text
 awe: --executor needs a name. Available: search, write   (e.g. awe run 1.1 --executor search)
-awe: unknown step "3.1.1" — it is inside a PARALLEL group; run its group instead: awe run 3.1
+awe: 3.1 is a PARALLEL group, not a step. Run one of its steps, e.g. awe run 3.1.1  (steps: 3.1.1, 3.1.2)
 awe: no step "4.2". Steps: 1.1  1.2  2.1  3.1  3.2   (see: awe check)
 awe: no executor configured. Add one to awe.json, e.g.
        "run": "claude -p {prompt}"      "run": "codex exec {prompt}"
        "run": "opencode run {prompt}"   "run": "omp -p {prompt}"
-awe: 1.1 timed out after 120s (awe.json "timeout", or --timeout 600). Last stderr:
-       … searching "arabica vs robusta" (23 of ?)
-     Next  awe run 1.1 --timeout 600
-awe: not inside a workflow (no ENTRY.md in /repo or its parents). Next  cd <workflow> or awe run <dir>
+  1.1     FAILED  Command timed out after 120s. Raise it with --timeout <seconds> or "timeout" in awe.json.
+          … searching "arabica vs robusta" (23 of ?)
+Next  awe run 1.1 --timeout 240    (limit now 120s)   ·   awe show 1.1 --err
+awe: Not inside a workflow (no ENTRY.md in /repo or its parents).
+Next: cd into a workflow, pass its folder (awe run <dir>), or create one with: awe init <dir>
 ```
 
 規則：
 
 - 需要值的 flag 拒絕以 `-` 開頭的值，不會吞掉下一個 flag。
 - 逾時與失敗都保存 stderr 末 20 行，`awe show <step> --err` 可看，錯誤訊息直接印出。
-- `--var` 與 cache 並用不再報錯：`--var` 改變 input 就是改變指紋，相關步驟自然失效。
+- `--var` 與 cache 並用不再報錯：`--var` 改變 input 就是改變指紋，舊結果保留在舊 input 之下，新 input 另起一份。
+- 執行命令的顯示（run 標頭、`awe check`）只列出執行檔與單純的旗標，其他引數以 `…` 取代，避免命令列上的金鑰出現在終端機或 log。
 - 完整的 workflow 失敗後，輸出最後一行永遠是建議的下一條命令。
-- 退出碼：`0` 成功、`1` 某步失敗、`2` 用法或設定錯誤、`130` 被中斷。
+- 退出碼：`0` 成功、`1` 某步失敗、`2` 用法或設定錯誤（awe 無法開始）、`130` / `143` 被中斷。`awe check` 在 workflow 有效時一律回 `0`，executor 缺少只標示 `NOT READY`。
 
 ## 7. 被移除的東西
 
@@ -163,37 +166,40 @@ awe: not inside a workflow (no ENTRY.md in /repo or its parents). Next  cd <work
 | `--from` / `--reuse` 成對規則 | 在 `<step>` 上直接用 cache |
 | `status`、`inspect`、`explain` | `awe show` |
 | `validate`、`plan` | `awe check` |
-| `--invocation` | `step@n` 位址 |
+| `--invocation` | `step@n`（巢狀為 `step@n.m`）位址 |
 | `SIMULATED` / `COMMAND` 執行模式標籤 | 不再有假成功，也就不需要標籤；`--dry` 的輸出自帶 `DRY` 標頭 |
 
 ## 8. 舊設定的相容
 
-舊的 `executor: { type, argv, timeoutMs }` 仍可讀取，每次執行印一行警告：
+舊的 `executor: { type, argv, timeoutMs }` 仍可讀取，每次執行在 stderr 印一行警告，內容包含可貼上的新寫法：
 
 ```text
-awe: awe.json uses the deprecated "executor" block. Replace with:  "run": "claude -p {prompt}", "timeout": 120
+awe: warning: awe.json uses the deprecated "executor" block. Replace it with: "run": "claude -p x", "timeout": 120
 ```
 
-- `type: "echo"` 不再可用：`run` 報錯並提示 `--dry` 或設定真正的 executor。
-- 舊的 `.awe/runs` 與 `.awe/dev` 不會被匯入，也不會被刪除。
+- `type: "echo"` 不再可用：`run` 報錯並提示 `--dry` 或設定真正的 executor；`--dry` 仍可預覽該 workflow。
+- 舊的 `.awe/runs` 與 `.awe/dev` 不會被匯入，也不會被刪除；`awe show` 仍讀得到舊 run 的 state。
 
-## 9. 實作範圍
+## 9. 實作範圍（已完成）
 
-保留：`discover.js`、`template.js`、`preflight.js`、`outputs.js`、指紋與 cache 驗證邏輯（`dev.js`/`dev-store.js` 內）。
+- `src/cli.js`：新命令與 flag 解析；需要值的 flag 拒絕以 `-` 開頭的值；被移除的命令回報替代寫法。
+- `src/command.js`（命令字串切分、顯示）、`src/config.js`（awe.json v2 與舊格式、executor 解析）、`src/executor.js`（`{prompt}` / `{prompt_file}` / stdin、長 prompt 轉檔、stderr 尾部）。
+- `src/engine.js`（原 `dev.js`）與 `src/cache.js`（原 `dev-store.js`）：`awe run` 唯一的執行路徑；`src/runtime.js` 只剩 prompt 組裝與 gate 判斷。
+- 新增 `src/show.js`、`src/dry.js`、`src/which.js`；`init.js` 偵測 AI CLI。
+- 文件：`docs/cli.md` 取代 `docs/dev-mode.md`；README、SKILL、installation、maintenance、architecture 同步更新。
+- 測試：既有的引擎、cache、recovery、output files 測試全數移植到新介面，另加 `test/cli.test.js`、`test/command.test.js`。
 
-重寫：
+## 10. 原本未決定的項目，現況
 
-- `cli.js`：新命令與 flag 解析，含「值不得以 `-` 開頭」的檢查。
-- `executor.js`：命令字串切分、`{prompt}` / `{prompt_file}` / stdin、長 prompt 轉檔、stderr 尾部保存。
-- `runtime.js` + `dev.js` + `dev-store.js`：合併為一套（目標步驟、cache 開關、同一份 run 記錄）。
-- 新增 `show.js`（取代 status/inspect/explain）、`find-root.js`（往上找 `ENTRY.md`）。
-- `init.js`：偵測 PATH 上的 AI CLI。
-- 同一個 PR 更新 `README.md`、`docs/dev-mode.md`（改名並縮短）、`.agents/skills/awe/SKILL.md`。
+1. **LOOP / IF 內的目標位址。** `step@n`（巢狀為 `step@outer.inner`）；省略時若只見過一個 occurrence 就用它，見過多個則報錯並列出可用寫法。IF 未選中的分支維持 `TARGET_UNREACHABLE` 並說明 gate 選了哪個分支。
+2. **`UNKNOWN_EFFECT`。** 保留機制，flag 改為 `--retry <step>`，錯誤訊息印出完整寫法。
+3. **`--dry` 遇到 IF / LOOP。** 只印每個 prompt，上游輸出以 `[output of 1.1]` 佔位，IF 顯示所有分支，LOOP 只展開一圈。
+4. **長 prompt 門檻。** 固定 64 KB（Windows 16 KB），不開放設定。
+5. **搜尋次數預算。** 不內建；範例 prompt 與文件建議自行寫明 "at most N searches"，並為慢的步驟設定較長的 `timeout`。
 
-## 10. 尚未決定
+## 11. 與最初提案的差異
 
-1. **LOOP / IF 內的目標位址。** 提議 `step@n`（第 n 圈），省略時取最近一次；IF 未選中的分支維持 `TARGET_UNREACHABLE`，但錯誤要說明目前選中的是哪個分支。
-2. **`UNKNOWN_EFFECT`（指令被中斷、不確定是否已產生副作用）。** 提議保留機制，但把 flag 縮成 `--retry <step>`，並在錯誤訊息裡印出完整命令。
-3. **`--dry` 遇到 IF / LOOP。** 提議只印每個 prompt，上游輸出以 `[output of 1.1]` 佔位，IF 顯示所有分支，LOOP 只展開一圈。
-4. **長 prompt 門檻。** 預設 64 KB，是否需要 `awe.json` 可調，尚未決定。
-5. **step 級 timeout 之外，是否需要「搜尋次數預算」。** 提議不內建：只在 `init` 的範例 prompt 裡寫明 "at most N searches"，並在文件標明建議的 timeout。
+- `--retry` 讓 `awe run` 有 7 個 flag，而不是 6 個。
+- 群組位址（例如 PARALLEL 的 `3.1`）不是步驟，錯誤訊息列出群組內可執行的步驟；PARALLEL 內的單一步驟（`3.1.1`）可以直接執行。
+- 提案中的 `show --prompt` 路徑改為既有的 `artifacts/prompt-<step>-attempt-<n>.md`，並且預設保存。
+- `awe check` 不因 executor 缺少而失敗。

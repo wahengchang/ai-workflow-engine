@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { cli } from '../src/cli.js';
+import { AweError } from '../src/errors.js';
 const controller = new AbortController();
 let signalCode;
 const interrupt = signal => {
@@ -16,11 +17,14 @@ process.on('SIGTERM', onTerm);
 process.on('SIGHUP', onHup);
 try {
   const result = await cli(process.argv.slice(2), process.cwd(), { signal: controller.signal });
+  for (const warning of result.warnings ?? []) console.error(`awe: warning: ${warning}`);
   console.log(result.output);
   process.exitCode = result.code;
 } catch (error) {
-  console.error(`awe: ${error.code ?? 'ERROR'}: ${error.message}`);
-  process.exitCode = 1;
+  // 2: awe could not start (usage, configuration, workflow files). 1: anything unexpected.
+  if (process.argv.includes('--json')) console.log(JSON.stringify({ error: { code: error.code ?? 'ERROR', message: error.message } }, null, 2));
+  else console.error(`awe: ${error.message}`);
+  process.exitCode = error instanceof AweError ? 2 : 1;
 } finally {
   process.off('SIGINT', onInt);
   process.off('SIGTERM', onTerm);

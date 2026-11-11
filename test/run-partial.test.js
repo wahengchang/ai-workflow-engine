@@ -2,23 +2,23 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { workspace, put, dev, calls, countByStep, flow, agentArgs } from '../fixtures/dev-helpers.mjs';
+import { workspace, put, run, resume, calls, countByStep, flow, agentCommand } from '../fixtures/helpers.mjs';
 import { cli } from '../src/cli.js';
-import { precontext } from '../src/dev.js';
+import { precontext } from '../src/engine.js';
 
 const ids = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `1.${from + i}`);
 
-test('100 steps: --step runs 1-49 once, retests 50 three times, then dev . finishes 51-100 without rerunning 50', async t => {
+test('100 steps: --step runs 1-49 once, retests 50 three times, then a cached whole run finishes 51-100 without rerunning 50', async t => {
   const files = {};
   for (let n = 1; n <= 100; n++) {
     files[`1.${n}-step.md`] = `${n === 1 ? 'start' : `Prev={{ steps["1.${n - 1}"].output }}`}\nOUTPUT::s${n}#{n}`;
   }
   const ws = await workspace(t, files);
 
-  const first = await dev(ws, ['--step', '1.50']);
+  const first = await run(ws, ['1.50']);
   assert.equal(first.status, 'COMPLETED');
-  assert.equal(first.dev.stoppedAfter, '1.50');
-  assert.deepEqual([first.dev.executed, first.dev.reused], [50, 0]);
+  assert.equal(first.stoppedAfter, '1.50');
+  assert.deepEqual([first.executed, first.reused], [50, 0]);
   const afterFirst = await countByStep(ws.log);
   assert.deepEqual(Object.keys(afterFirst), ids(1, 50), 'only 1-50 ran; nothing after the target');
   assert.ok(Object.values(afterFirst).every(count => count === 1));
@@ -26,10 +26,10 @@ test('100 steps: --step runs 1-49 once, retests 50 three times, then dev . finis
   const upstreamDigests = [first.invocations.find(i => i.step === '1.50').upstreamDigest];
   for (const version of ['v2', 'v3']) {
     await put(ws.dir, '1.50-step.md', `Prev={{ steps["1.49"].output }}\nOUTPUT::s50-${version}#{n}`);
-    const rerun = await dev(ws, ['--step', '1.50']);
+    const rerun = await run(ws, ['1.50']);
     assert.equal(rerun.status, 'COMPLETED');
-    assert.equal(rerun.dev.sessionId, first.dev.sessionId);
-    assert.deepEqual([rerun.dev.executed, rerun.dev.reused], [1, 49]);
+    assert.equal(rerun.session, first.session);
+    assert.deepEqual([rerun.executed, rerun.reused], [1, 49]);
     upstreamDigests.push(rerun.invocations.find(i => i.step === '1.50' && i.action === 'EXECUTED').upstreamDigest);
   }
   assert.equal(new Set(upstreamDigests).size, 1, 'upstream context of step 50 is identical across the three tests');
@@ -37,9 +37,9 @@ test('100 steps: --step runs 1-49 once, retests 50 three times, then dev . finis
   assert.equal(afterThree['1.50'], 3);
   for (const id of ids(1, 49)) assert.equal(afterThree[id], 1, `${id} must not be called again`);
 
-  const last = await dev(ws);
+  const last = await resume(ws);
   assert.equal(last.status, 'COMPLETED');
-  assert.deepEqual([last.dev.executed, last.dev.reused], [50, 50]);
+  assert.deepEqual([last.executed, last.reused], [50, 50]);
   const final = await countByStep(ws.log);
   assert.equal(final['1.50'], 3, '50 is not rerun by dev .');
   for (const id of ids(51, 100)) assert.equal(final[id], 1);
@@ -56,10 +56,10 @@ test('editing an upstream prompt reruns it and everything after, but keeps earli
     '1.2-b.md': 'A={{ steps["1.1"].output }} OUTPUT::b#{n}',
     '1.3-c.md': 'B={{ steps["1.2"].output }} OUTPUT::c#{n}',
   });
-  await dev(ws);
+  await resume(ws);
   await put(ws.dir, '1.2-b.md', 'A={{ steps["1.1"].output }} OUTPUT::b-edited#{n}');
-  const second = await dev(ws);
-  assert.deepEqual([second.dev.executed, second.dev.reused], [2, 1]);
+  const second = await resume(ws);
+  assert.deepEqual([second.executed, second.reused], [2, 1]);
   assert.deepEqual(await countByStep(ws.log), { '1.1': 1, '1.2': 2, '1.3': 2 });
   assert.match((await calls(ws.log)).filter(c => c.step === '1.3').at(-1).prompt, /B=b-edited#2/);
 });
@@ -69,10 +69,10 @@ test('rerunning a step with identical output still invalidates later steps (caus
     '1.1-a.md': 'OUTPUT::same',
     '1.2-b.md': 'A={{ steps["1.1"].output }} OUTPUT::b#{n}',
   });
-  await dev(ws);
-  await dev(ws, ['--step', '1.1']);
-  const next = await dev(ws);
-  assert.deepEqual([next.dev.executed, next.dev.reused], [1, 1]);
+  await resume(ws);
+  await run(ws, ['1.1']);
+  const next = await resume(ws);
+  assert.deepEqual([next.executed, next.reused], [1, 1]);
   assert.equal((await countByStep(ws.log))['1.2'], 2);
 });
 
@@ -82,24 +82,24 @@ test('a failed rerun blocks downstream from silently using the previous success'
     '1.2-b.md': 'FAIL_IF_EXISTS::block.flag\nOUTPUT::b#{n}',
     '1.3-c.md': 'B={{ steps["1.2"].output }} OUTPUT::c#{n}',
   });
-  assert.equal((await dev(ws)).status, 'COMPLETED');
+  assert.equal((await resume(ws)).status, 'COMPLETED');
   await put(ws.dir, 'block.flag', 'x');
 
-  const failed = await dev(ws, ['--step', '1.2']);
+  const failed = await run(ws, ['1.2']);
   assert.equal(failed.status, 'FAILED');
   assert.equal(failed.error.code, 'EXECUTOR_FAILED');
 
-  const blocked = await dev(ws);
+  const blocked = await resume(ws);
   assert.equal(blocked.status, 'FAILED', 'dev . must not fall back to the old success of 1.2');
   assert.equal(blocked.invocations.some(i => i.step === '1.3'), false, 'step 1.3 is not run or reused');
-  const viaDownstream = await dev(ws, ['--step', '1.3']);
+  const viaDownstream = await run(ws, ['1.3']);
   assert.equal(viaDownstream.status, 'FAILED');
   assert.equal((await countByStep(ws.log))['1.3'], 1, '1.3 never ran again');
 
   await rm(path.join(ws.dir, 'block.flag'));
-  const recovered = await dev(ws);
+  const recovered = await resume(ws);
   assert.equal(recovered.status, 'COMPLETED');
-  assert.deepEqual([recovered.dev.executed, recovered.dev.reused], [2, 1]);
+  assert.deepEqual([recovered.executed, recovered.reused], [2, 1]);
   assert.match((await calls(ws.log)).filter(c => c.step === '1.3').at(-1).prompt, /B=b#5/);
 });
 
@@ -112,20 +112,20 @@ test('IF branch flip: the gate re-evaluates, the other branch runs, the old bran
     '1.2-route/rework/1.2.2-fix.md': 'OUTPUT::fix#{n}',
     '1.3-after.md': 'OUTPUT::after#{n}',
   });
-  await dev(ws);
+  await resume(ws);
   assert.deepEqual(await countByStep(ws.log), { '1.1': 1, '1.2.1': 1, '1.3': 1 });
 
   await put(ws.dir, 'verdict.txt', 'FAIL');
-  const stillOld = await dev(ws, ['--step', '1.2.1']);
+  const stillOld = await run(ws, ['1.2.1']);
   assert.equal(stillOld.status, 'COMPLETED', 'the judge result is reused, so the gate still selects the old branch');
 
-  await dev(ws, ['--step', '1.1']);
-  const refused = await dev(ws, ['--step', '1.2.1']);
+  await run(ws, ['1.1']);
+  const refused = await run(ws, ['1.2.1']);
   assert.equal(refused.status, 'FAILED');
   assert.equal(refused.error.code, 'TARGET_UNREACHABLE');
   assert.equal((await countByStep(ws.log))['1.2.1'], 2, 'the unselected branch was not executed');
 
-  const flipped = await dev(ws);
+  const flipped = await resume(ws);
   assert.equal(flipped.status, 'COMPLETED');
   assert.deepEqual(flipped.events.filter(e => e.type === 'IF_BRANCH').map(e => e.branch), ['rework']);
   const counts = await countByStep(ws.log);
@@ -145,41 +145,42 @@ const nestedLoop = {
   '1.2-final.md': 'OUTPUT::final#{n}',
 };
 const occurrence = (outer, inner) => `1.1.2.1@1.1-outer=${outer},1.1-outer/1.1.2-inner=${inner}`;
-const invocationOf = (outer, inner) => `1.1-outer=${outer},1.1-outer/1.1.2-inner=${inner}`;
+const iteration = (outer, inner) => `${outer}.${inner}`;
 
 test('nested LOOP: occurrences are addressed separately from attempts', async t => {
   const ws = await workspace(t, nestedLoop);
-  const state = await dev(ws);
+  const state = await resume(ws);
   assert.equal(state.status, 'COMPLETED', JSON.stringify(state.error));
   const b = state.invocations.filter(i => i.step === '1.1.2.1');
   assert.deepEqual(b.map(i => i.address), [occurrence(1, 1), occurrence(1, 2), occurrence(2, 1), occurrence(3, 1)]);
   assert.deepEqual(b.map(i => i.attempt), [1, 2, 3, 4], 'one attempt per execution');
   assert.equal(state.steps['1.1.2.1'].attempts, 4);
 
-  await assert.rejects(dev(ws, ['--step', '1.1.2.1']), error => {
-    assert.equal(error.code, 'INVOCATION_REQUIRED');
-    for (const [o, i] of [[1, 1], [1, 2], [2, 1], [3, 1]]) assert.ok(error.message.includes(invocationOf(o, i)), `lists ${invocationOf(o, i)}`);
+  await assert.rejects(run(ws, ['1.1.2.1']), error => {
+    assert.equal(error.code, 'ITERATION_REQUIRED');
+    for (const [o, i] of [[1, 1], [1, 2], [2, 1], [3, 1]]) assert.ok(error.message.includes(`1.1.2.1@${iteration(o, i)}`), `lists 1.1.2.1@${iteration(o, i)}`);
     return true;
   });
-  await assert.rejects(dev(ws, ['--step', '1.1.2.1', '--invocation', 'nonsense']), { code: 'INVOCATION_INVALID' });
-  await assert.rejects(dev(ws, ['--step', '1.1.2.1', '--invocation', '1.1-outer=9,1.1-outer/1.1.2-inner=1']), { code: 'INVOCATION_INVALID' });
-  await assert.rejects(dev(ws, ['--step', '1.2', '--invocation', '1.1-outer=1']), { code: 'INVOCATION_INVALID' });
+  await assert.rejects(run(ws, ['1.1.2.1@nonsense']), { code: 'CLI_USAGE' });
+  await assert.rejects(run(ws, ['1.1.2.1@2']), { code: 'ITERATION_INVALID', message: /Write it as 1\.1\.2\.1@<1-3>\.<1-3>/ });
+  await assert.rejects(run(ws, ['1.1.2.1@9.1']), { code: 'ITERATION_INVALID' });
+  await assert.rejects(run(ws, ['1.2@1']), { code: 'ITERATION_INVALID' });
   assert.equal((await countByStep(ws.log))['1.1.2.1'], 4, 'rejected commands run nothing');
 });
 
 test('nested LOOP: rerunning an occurrence keeps earlier occurrences and retires the later ones', async t => {
   const ws = await workspace(t, nestedLoop);
-  await dev(ws);
-  const target = await dev(ws, ['--step', '1.1.2.1', '--invocation', invocationOf(2, 1)]);
+  await resume(ws);
+  const target = await run(ws, ['1.1.2.1@2.1']);
   assert.equal(target.status, 'COMPLETED');
-  assert.deepEqual([target.dev.executed, target.dev.reused], [1, 7], 'outer iteration 1 and a(O2) are reused');
-  assert.equal(target.dev.target.address, occurrence(2, 1));
+  assert.deepEqual([target.executed, target.reused], [1, 7], 'outer iteration 1 and a(O2) are reused');
+  assert.equal(target.target.address, '1.1.2.1@2.1');
   assert.equal((await countByStep(ws.log))['1.1.2.1'], 5);
 
-  const rest = await dev(ws);
+  const rest = await resume(ws);
   assert.equal(rest.status, 'COMPLETED');
   // b#5 (O2,I1) now passes both gates, so iteration 3 of the outer loop is no longer reached.
-  assert.deepEqual([rest.dev.executed, rest.dev.reused], [3, 8]);
+  assert.deepEqual([rest.executed, rest.reused], [3, 8]);
   assert.deepEqual(await countByStep(ws.log), { '1.1.1': 3, '1.1.2.1': 5, '1.1.2.2': 5, '1.1.3': 4, '1.2': 2 });
   assert.deepEqual(rest.invocations.filter(i => i.action === 'REUSED').map(i => i.address).sort(), [
     '1.1.1@1.1-outer=1', '1.1.1@1.1-outer=2', occurrence(1, 1), occurrence(1, 2), occurrence(2, 1),
@@ -190,12 +191,12 @@ test('nested LOOP: rerunning an occurrence keeps earlier occurrences and retires
 
 test('nested LOOP: retesting the first occurrence shortens the loop; an occurrence that is no longer reached is refused', async t => {
   const ws = await workspace(t, nestedLoop);
-  await dev(ws);
-  await dev(ws, ['--step', '1.1.2.1', '--invocation', invocationOf(1, 1)]);
-  const rest = await dev(ws);
-  assert.deepEqual([rest.dev.executed, rest.dev.reused], [3, 2]);
+  await resume(ws);
+  await run(ws, ['1.1.2.1@1.1']);
+  const rest = await resume(ws);
+  assert.deepEqual([rest.executed, rest.reused], [3, 2]);
   assert.deepEqual(await countByStep(ws.log), { '1.1.1': 3, '1.1.2.1': 5, '1.1.2.2': 5, '1.1.3': 4, '1.2': 2 });
-  const gone = await dev(ws, ['--step', '1.1.2.1', '--invocation', invocationOf(3, 1)]);
+  const gone = await run(ws, ['1.1.2.1@3.1']);
   assert.equal(gone.status, 'FAILED');
   assert.equal(gone.error.code, 'TARGET_UNREACHABLE');
   assert.equal((await countByStep(ws.log))['1.1.2.1'], 5);
@@ -220,7 +221,7 @@ const fanOut = {
 
 test('PARALLEL: a cold --step inside a branch runs only that branch', async t => {
   const ws = await workspace(t, fanOut);
-  const state = await dev(ws, ['--step', '1.2.2']);
+  const state = await run(ws, ['1.2.2']);
   assert.equal(state.status, 'COMPLETED');
   assert.deepEqual(await countByStep(ws.log), { '1.1': 1, '1.2.2': 1 }, 'sibling branches and the join are not touched');
 });
@@ -228,104 +229,97 @@ test('PARALLEL: a cold --step inside a branch runs only that branch', async t =>
 test('PARALLEL: a failed branch keeps its siblings; only it and the join are redone', async t => {
   const ws = await workspace(t, fanOut);
   await put(ws.dir, 'b.flag', 'x');
-  const failed = await dev(ws);
+  const failed = await resume(ws);
   assert.equal(failed.status, 'FAILED');
   assert.deepEqual(await countByStep(ws.log), { '1.1': 1, '1.2.1': 1, '1.2.2': 1, '1.2.3': 1 }, 'siblings finished and were recorded; the join never ran');
   const digests = failed.invocations.filter(i => ['1.2.1', '1.2.2', '1.2.3'].includes(i.step)).map(i => i.upstreamDigest);
   assert.equal(new Set(digests).size, 1, 'branches share the same upstream snapshot');
 
   await rm(path.join(ws.dir, 'b.flag'));
-  const healed = await dev(ws);
+  const healed = await resume(ws);
   assert.equal(healed.status, 'COMPLETED');
-  assert.deepEqual([healed.dev.executed, healed.dev.reused], [2, 3]);
+  assert.deepEqual([healed.executed, healed.reused], [2, 3]);
   assert.deepEqual(await countByStep(ws.log), { '1.1': 1, '1.2.1': 1, '1.2.2': 2, '1.2.3': 1, '1.3': 1 });
   assert.match((await calls(ws.log)).find(c => c.step === '1.3').prompt, /A=a#1 B=b#2 C=c#1/);
 
-  const only = await dev(ws, ['--step', '1.2.2']);
-  assert.deepEqual([only.dev.executed, only.dev.reused], [1, 1]);
+  const only = await run(ws, ['1.2.2']);
+  assert.deepEqual([only.executed, only.reused], [1, 1]);
   assert.equal((await countByStep(ws.log))['1.3'], 1, 'target stops before the join');
-  const after = await dev(ws);
-  assert.deepEqual([after.dev.executed, after.dev.reused], [1, 4]);
+  const after = await resume(ws);
+  assert.deepEqual([after.executed, after.reused], [1, 4]);
   assert.match((await calls(ws.log)).filter(c => c.step === '1.3').at(-1).prompt, /A=a#1 B=b#3 C=c#1/);
 });
 
-test('each dev command pins its sources; edits made while it runs apply to the next command', async t => {
+test('each run pins its sources; edits made while it runs apply to the next command', async t => {
   const ws = await workspace(t, {
     '1.1-a.md': 'OUTPUT::a\nWRITE::1.2-b.md::OUTPUT::edited',
     '1.2-b.md': 'OUTPUT::original',
   });
-  const first = await dev(ws);
+  const first = await resume(ws);
   assert.equal((await readFile(first.steps['1.2'].artifact, 'utf8')), 'original');
   assert.match(await readFile(path.join(ws.dir, '1.2-b.md'), 'utf8'), /edited/);
-  const second = await dev(ws);
-  assert.deepEqual([second.dev.executed, second.dev.reused], [1, 1]);
+  const second = await resume(ws);
+  assert.deepEqual([second.executed, second.reused], [1, 1]);
   assert.equal((await readFile(second.steps['1.2'].artifact, 'utf8')), 'edited');
 });
 
-test('dev and run never share results, in either direction', async t => {
+test('a whole run starts clean unless asked to use the cache; naming a step uses it', async t => {
   const ws = await workspace(t, { '1.1-a.md': 'OUTPUT::a#{n}', '1.2-b.md': 'OUTPUT::b#{n}' });
-  const prod = () => cli(['run', ws.dir, ...agentArgs(ws.log), '--json'], ws.dir);
-  const firstRun = JSON.parse((await prod()).output);
-  assert.equal(firstRun.mode, undefined, 'run state keeps its original shape');
-  assert.equal(firstRun.dev, undefined);
-  const state = await dev(ws);
-  assert.equal(state.dev.reused, 0, 'dev does not import the run');
-  await prod();
-  assert.deepEqual(await countByStep(ws.log), { '1.1': 3, '1.2': 3 });
-  const again = await dev(ws);
-  assert.deepEqual([again.dev.executed, again.dev.reused], [0, 2], 'dev still reuses its own results');
-  const status = await cli(['status', state.runId], ws.dir);
-  assert.match(status.output, /Dev: session .* scope full workflow/);
-  assert.match((await cli(['status', firstRun.runId], ws.dir)).output, /COMPLETED/);
+  const first = await run(ws);
+  assert.deepEqual([first.cache, first.executed, first.reused], [false, 2, 0]);
+  const second = await run(ws);
+  assert.deepEqual([second.cache, second.executed, second.reused], [false, 2, 0], 'a whole run ignores the cache');
+  const cached = await run(ws, ['--cache']);
+  assert.deepEqual([cached.cache, cached.executed, cached.reused], [true, 0, 2], '--cache reuses valid steps');
+  const stepRun = await run(ws, ['1.2']);
+  assert.deepEqual([stepRun.cache, stepRun.executed, stepRun.reused], [true, 1, 1], 'a named step reruns, upstream is reused');
+  const noCache = await run(ws, ['1.2', '--no-cache']);
+  assert.deepEqual([noCache.cache, noCache.executed, noCache.reused], [false, 2, 0], '--no-cache reruns upstream too');
+  assert.deepEqual(await countByStep(ws.log), { '1.1': 3, '1.2': 4 });
+  const after = await run(ws, ['--cache']);
+  assert.deepEqual([after.executed, after.reused], [0, 2], 'every run feeds the one cache');
+  await assert.rejects(cli(['run', ws.dir, '--cache', '--no-cache']), { code: 'CLI_USAGE', message: /one switch/ });
 });
 
-test('sessions are isolated by input and by the full executor command, not by timeouts', async t => {
+test('the cache is isolated by input and by the whole command line, not by timeouts', async t => {
   const ws = await workspace(t, { '1.1-a.md': 'Topic={{ input.topic }}\nOUTPUT::a#{n}' }, { input: { topic: 'coffee' } });
-  const base = await dev(ws);
-  assert.equal((await dev(ws)).dev.sessionId, base.dev.sessionId);
+  const base = await resume(ws);
+  assert.equal((await resume(ws)).session, base.session);
 
-  const tea = await dev(ws, ['--var', 'topic=tea']);
-  assert.notEqual(tea.dev.sessionId, base.dev.sessionId, 'different input');
-  assert.equal(tea.dev.executed, 1);
+  const tea = await resume(ws, ['--var', 'topic=tea']);
+  assert.notEqual(tea.session, base.session, 'different input');
+  assert.equal(tea.executed, 1);
 
-  const flagged = await dev(ws, [], { agentExtra: ['--extra-flag'] });
-  assert.notEqual(flagged.dev.sessionId, base.dev.sessionId, 'same executable, different argument');
-  assert.notEqual(flagged.dev.sessionId, tea.dev.sessionId);
+  const config = extra => writeFile(path.join(ws.dir, 'awe.json'), JSON.stringify({ version: 2, input: { topic: 'coffee' }, ...extra }));
+  await config({ run: agentCommand(ws.log, ['--extra-flag']) });
+  const flagged = await resume(ws);
+  assert.equal(flagged.session, base.session, 'the session is per workflow and input');
+  assert.equal(flagged.executed, 1, 'same executable, different argument: the result is not reused');
+  assert.equal(flagged.reused, 0);
 
-  await writeFile(path.join(ws.dir, 'awe.json'), JSON.stringify({ input: { topic: 'coffee' }, executor: { timeoutMs: 9000 } }));
-  const slower = await dev(ws);
-  assert.equal(slower.dev.sessionId, base.dev.sessionId, 'timeout does not change results');
-  assert.equal(slower.dev.reused, 1);
-
-  const fresh = await dev(ws, ['--fresh']);
-  assert.notEqual(fresh.dev.sessionId, base.dev.sessionId);
-  assert.equal(fresh.dev.executed, 1);
-  assert.equal((await dev(ws)).dev.sessionId, fresh.dev.sessionId, 'the newest compatible session is the default');
+  await config({ run: agentCommand(ws.log, ['--extra-flag']), timeout: 9000 });
+  const slower = await resume(ws);
+  assert.equal(slower.reused, 1, 'timeout does not change results');
 });
 
-test('legacy runs stay readable and untrusted session data is never used as a cache', async t => {
+test('untrusted session data is never used as a cache', async t => {
   const ws = await workspace(t, { '1.1-a.md': 'OUTPUT::a#{n}' });
-  const legacy = JSON.parse((await cli(['run', ws.dir, ...agentArgs(ws.log), '--json'], ws.dir)).output);
-  await put(ws.dir, '.awe/dev/dev-old/session.json', JSON.stringify({ schema: 0, id: 'dev-old', records: {} }));
-  await put(ws.dir, '.awe/dev/dev-broken/session.json', '{ not json');
-  await put(ws.dir, '.awe/dev/dev-forged/session.json', JSON.stringify({ schema: 1, id: 'dev-forged', compat: {}, records: {}, lastUsedAt: '2999-01-01' }));
-  const state = await dev(ws);
-  assert.equal(state.dev.executed, 1);
-  assert.notEqual(state.dev.sessionId, 'dev-old');
-  assert.match((await cli(['status', legacy.runId], ws.dir)).output, /COMPLETED/);
-  assert.equal(JSON.parse((await cli(['inspect', legacy.runId], ws.dir)).output).runId, legacy.runId);
+  await put(ws.dir, '.awe/cache/cache-old/session.json', JSON.stringify({ schema: 0, id: 'cache-old', records: {} }));
+  await put(ws.dir, '.awe/cache/cache-broken/session.json', '{ not json');
+  await put(ws.dir, '.awe/cache/cache-forged/session.json', JSON.stringify({ schema: 1, id: 'cache-forged', compat: {}, records: {}, lastUsedAt: '2999-01-01' }));
+  const state = await resume(ws);
+  assert.equal(state.executed, 1);
+  assert.notEqual(state.session, 'cache-old');
+  assert.notEqual(state.session, 'cache-forged');
 });
 
-test('dev option handling', async t => {
+test('run option handling', async t => {
   const ws = await workspace(t, { '1.1-a.md': 'OUTPUT::a' });
-  for (const args of [['run', ws.dir, '--invocation', 'x'], ['run', ws.dir, '--fresh'], ['simulate', ws.dir, '--acknowledge', '1.1']]) {
-    await assert.rejects(cli(args, ws.dir), { code: 'CLI_USAGE' });
+  for (const args of [['--invocation', 'x'], ['--fresh'], ['--acknowledge', '1.1'], ['--step', '1.1'], ['--retry'], ['--timeout', '0'], ['--timeout'], ['--var', 'novalue'], ['--dry', '--no-cache'], ['--dry', '--executor', 'run'], ['1.1', '1.1']]) {
+    await assert.rejects(cli(['run', ws.dir, ...args], ws.dir), { code: 'CLI_USAGE' }, args.join(' '));
   }
-  await assert.rejects(dev(ws, ['--invocation', '1.1-x=1']), { code: 'CLI_USAGE' });
-  await assert.rejects(dev(ws, ['--step', '9.9']), { code: 'DEV_TARGET_NOT_FOUND' });
-  await assert.rejects(dev(ws, ['--step', '1.1', '--invocation', 'x=1']), { code: 'INVOCATION_INVALID' });
-  await assert.rejects(dev(ws, ['--acknowledge']), { code: 'CLI_USAGE' });
-  await assert.rejects(dev(ws, ['--acknowledge', '1.1']), { code: 'ACKNOWLEDGE_UNKNOWN' });
-  assert.match((await cli(['--help'], ws.dir)).output, /awe dev .*--step/);
+  await assert.rejects(run(ws, ['9.9']), { code: 'STEP_NOT_FOUND', message: /No step "9\.9"\. Steps: 1\.1/ });
+  await assert.rejects(run(ws, ['--retry', '1.1']), { code: 'RETRY_UNKNOWN' });
+  assert.match((await cli(['--help'], ws.dir)).output, /awe run .*\[step\]/);
   assert.equal((await countByStep(ws.log))['1.1'], undefined, 'usage errors start no executor');
 });

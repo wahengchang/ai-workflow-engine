@@ -1,6 +1,6 @@
 # RFC 0001 — AWE v0.2: novice-first, composable-by-design
 
-Status: **PROPOSED / NOT IMPLEMENTED**  
+Status: **PROPOSED / NOT IMPLEMENTED**. The CLI surface it sketches (`simulate`, `doctor`, `outputs`, ...) is superseded by [RFC 0002](rfc-0002-cli-redesign.md); the compiler/runtime and recovery proposals below are unchanged.  
 Baseline: `main` v0.1; see [Persona Review](persona-review-2026-11-06.md).
 
 Implementation progress: `awe simulate` and explicit execution-mode labels now exist. Successful simulations keep `status: COMPLETED` and record `executionMode: SIMULATED`; command runs record `COMMAND`. Legacy `run` selection and exit codes remain compatible. Other proposals below retain their stated future status.

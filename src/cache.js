@@ -5,10 +5,10 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { AweError } from './errors.js';
 import { canonical } from './digest.js';
 
-// Dev cache lives under .awe/dev/<session>/session.json. It is a separate namespace
-// from .awe/runs: awe run never reads or writes it, and awe dev never imports a run.
+// The result cache lives under .awe/cache/<session>/session.json. Every `awe run` records its
+// results here; a later run reuses them only when their fingerprint is still valid.
 export const SESSION_SCHEMA = 1;
-const SESSION_ID = /^dev-[\w-]+$/;
+const SESSION_ID = /^cache-[\w-]+$/;
 const HISTORY_LIMIT = 20;
 
 export async function atomicWrite(file, text) {
@@ -25,7 +25,7 @@ export async function atomicWrite(file, text) {
 
 // A per-workspace random key: digests of argv/inputs cannot be brute-forced from session.json alone.
 export async function workspaceSalt(root) {
-  const base = path.join(root, '.awe', 'dev');
+  const base = path.join(root, '.awe', 'cache');
   await mkdir(base, { recursive: true });
   const file = path.join(base, '.salt');
   try {
@@ -71,7 +71,7 @@ async function acquireLock(dir, sessionId) {
         stale = !info || Date.now() - info.mtimeMs > 30000;
       }
       if (!stale) {
-        throw new AweError('DEV_SESSION_BUSY', `Dev session ${sessionId} is in use by another awe dev process${holder ? ` (pid ${holder.pid})` : ''}. Wait for it to finish, or start an independent session with --fresh.`);
+        throw new AweError('CACHE_BUSY', `Another awe run is using this workflow's cache${holder ? ` (pid ${holder.pid})` : ''}. Wait for it to finish and run again.`);
       }
       // Break the stale lock by renaming it away; if we grabbed a live one by mistake, put it back.
       const aside = `${file}.stale-${randomUUID()}`;
@@ -79,12 +79,12 @@ async function acquireLock(dir, sessionId) {
       const moved = await readLock(aside);
       if (holder && moved?.token !== holder.token) {
         await rename(aside, file).catch(() => {});
-        throw new AweError('DEV_SESSION_BUSY', `Dev session ${sessionId} is in use by another awe dev process.`);
+        throw new AweError('CACHE_BUSY', `Another awe run is using this workflow's cache. Wait for it to finish and run again.`);
       }
       await unlink(aside).catch(() => {});
     }
   }
-  throw new AweError('DEV_SESSION_BUSY', `Could not lock dev session ${sessionId}; try again.`);
+  throw new AweError('CACHE_BUSY', `Could not lock the cache (${sessionId}); try again.`);
 }
 
 async function readSession(file) {
@@ -98,7 +98,7 @@ async function readSession(file) {
 
 const blankRecord = (address, stepId) => ({ address, stepId, latest: null, pending: null, unknown: null, lastFailure: null, history: [] });
 
-export class DevSession {
+export class CacheSession {
   constructor(dir, data, lock, created) {
     this.dir = dir;
     this.data = data;
@@ -155,12 +155,12 @@ export class DevSession {
   }
   // A leftover intent means a previous process died between "about to run" and "recorded".
   // We hold the session lock, so nothing is running: the outcome is unknown, not "in progress".
-  async reconcile(root, executorType) {
+  async reconcile(root) {
     const orphans = this.records().filter(record => record.pending);
     for (const record of orphans) {
       const { runId, attempt } = record.pending;
       record.lastFailure = { runId, attempt, code: 'ORPHANED_INTENT', message: 'The process stopped before this attempt was recorded', at: new Date().toISOString() };
-      if (executorType === 'command') record.unknown = { runId, attempt, reason: 'ORPHANED_INTENT', at: new Date().toISOString() };
+      record.unknown = { runId, attempt, reason: 'ORPHANED_INTENT', at: new Date().toISOString() };
       this.#history(record, { status: 'ORPHANED', runId, attempt });
       record.pending = null;
       await markRunAbandoned(root, runId, record.stepId);
@@ -200,11 +200,11 @@ async function markRunAbandoned(root, runId, stepId) {
   } catch { /* best effort: the session record already carries the facts */ }
 }
 
-export async function openSession(root, compat, { fresh = false } = {}) {
-  const base = path.join(root, '.awe', 'dev');
+export async function openSession(root, compat) {
+  const base = path.join(root, '.awe', 'cache');
   await mkdir(base, { recursive: true });
   const wanted = canonical(compat);
-  if (!fresh) {
+  {
     const candidates = [];
     for (const name of await readdir(base).catch(() => [])) {
       if (!SESSION_ID.test(name)) continue;
@@ -217,16 +217,16 @@ export async function openSession(root, compat, { fresh = false } = {}) {
       const lock = await acquireLock(dir, candidates[0].id);
       // State may have changed between the scan and the lock: always continue from disk.
       const data = await readSession(path.join(dir, 'session.json'));
-      if (data?.id === candidates[0].id && canonical(data.compat) === wanted) return new DevSession(dir, data, lock, false);
+      if (data?.id === candidates[0].id && canonical(data.compat) === wanted) return new CacheSession(dir, data, lock, false);
       await lock.release();
     }
   }
-  const id = `dev-${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
+  const id = `cache-${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const dir = path.join(base, id);
   await mkdir(dir, { recursive: true });
   const lock = await acquireLock(dir, id);
   const now = new Date().toISOString();
-  const session = new DevSession(dir, { schema: SESSION_SCHEMA, id, createdAt: now, lastUsedAt: now, lastRunId: null, compat, records: {} }, lock, true);
+  const session = new CacheSession(dir, { schema: SESSION_SCHEMA, id, createdAt: now, lastUsedAt: now, lastRunId: null, compat, records: {} }, lock, true);
   await session.save();
   return session;
 }
