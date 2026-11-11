@@ -367,7 +367,7 @@ test('two ENTRY.md files: only the root one is used, the nested one is reported,
   assert.equal(checked.warnings.length, 1);
   assert.match(checked.warnings[0], /^stage-2[\\/]ENTRY\.md is ignored: only the ENTRY\.md at the workflow root is used/);
   const dry = await cli(['run', ws.dir, '2.1', '--dry'], ws.dir);
-  assert.match(dry.output, /# Workflow instructions \(ENTRY\.md\)\nROOT RULES\n\n\n# Step 2\.1 \(stage-2[\\/]2\.1\.md\)\ntwo-one\n/);
+  assert.match(dry.output, /# Workflow instructions \(ENTRY\.md\)\nROOT RULES\n\n# Step 2\.1 \(stage-2[\\/]2\.1\.md\)\ntwo-one\n/);
   assert.ok(!dry.output.includes('NESTED RULES'));
   assert.equal(dry.warnings.length, 1);
   const order = JSON.parse((await cli(['run', ws.dir, '--dry', '--json'], ws.dir)).output).steps.map(step => step.id);
