@@ -178,7 +178,8 @@ async function prepare(cwd, dir) {
   }
   const outputs = await validateReferences(entry, tree, sources);
   const promptIds = flatten(tree).filter(node => node.type === 'prompt').map(node => node.id);
-  return { entry, tree, promptIds, sources, outputs };
+  const warnings = [...entry.settings.warnings, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the ENTRY.md at the workflow root is used, and it is added to every step. Move its text into the root ENTRY.md or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
+  return { entry, tree, promptIds, sources, outputs, warnings };
 }
 
 function prettyPlan(plan) {
@@ -211,7 +212,7 @@ async function initCommand({ dir }, cwd, options = {}) {
 }
 
 async function checkCommand({ dir, flags }, cwd) {
-  const { entry, tree, promptIds } = await prepare(cwd, dir);
+  const { entry, tree, promptIds, warnings } = await prepare(cwd, dir);
   const plan = getPlan(tree);
   const names = new Set(['run', ...promptIds.map(id => entry.settings.steps[id]?.executor ?? 'run')]);
   const executors = [];
@@ -227,7 +228,7 @@ async function checkCommand({ dir, flags }, cwd) {
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
   const entryChars = entry.instructions.length;
   const result = { valid: true, ready: problems.length === 0, workflow: entry.root, entry: { characters: entryChars, addedToSteps: promptIds.length }, promptSteps: promptIds.length, plan, executors: used };
-  if (flags.json) return { output: JSON.stringify(result, null, 2), code: 0, warnings: entry.settings.warnings };
+  if (flags.json) return { output: JSON.stringify(result, null, 2), code: 0, warnings };
   const lines = [`VALID ${path.relative(cwd, entry.entryFile) || 'ENTRY.md'} (${promptIds.length} prompt steps)`];
   lines.push(`ENTRY.md  ${entryChars} characters, added to the prompt of every step${entryChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`, prettyPlan(plan), '');
   for (const item of used) {
@@ -241,12 +242,11 @@ async function checkCommand({ dir, flags }, cwd) {
   } else {
     lines.push('', 'Next  awe run --dry   ·   awe run 1.1');
   }
-  return { output: lines.join('\n'), code: 0, warnings: entry.settings.warnings };
+  return { output: lines.join('\n'), code: 0, warnings };
 }
 
 async function runCommand({ dir, step, flags }, cwd, options) {
-  const { entry, tree, promptIds, sources, outputs } = await prepare(cwd, dir);
-  const warnings = [...entry.settings.warnings];
+  const { entry, tree, promptIds, sources, outputs, warnings } = await prepare(cwd, dir);
   const target = step ? parseStepArg(step) : undefined;
 
   if (flags.dry) {

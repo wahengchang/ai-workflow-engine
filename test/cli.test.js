@@ -355,3 +355,25 @@ test('check reports the size of ENTRY.md; ENTRY.md may not use step outputs and 
   await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'MISSING_REFERENCE', message: /ENTRY\.md \(while preparing step 1\.1\).*can only use \{\{ input\.\* \}\}.*step's own prompt/s });
   await assert.rejects(cli(['check', path.join(ws.dir, '..', 'no-such-folder')]), { code: 'ENTRY_NOT_FOUND' });
 });
+
+test('two ENTRY.md files: only the root one is used, the nested one is reported, and no step is dropped silently', async t => {
+  const ws = await workspace(t, {
+    'ENTRY.md': 'ROOT RULES',
+    '1.1.md': 'one', '1.2.md': 'two',
+    'stage-2/ENTRY.md': 'NESTED RULES', 'stage-2/2.1.md': 'two-one', 'stage-2/2.2.md': 'two-two',
+  });
+  const checked = await cli(['check', ws.dir], ws.dir);
+  assert.match(checked.output, /VALID .*\(4 prompt steps\)/);
+  assert.equal(checked.warnings.length, 1);
+  assert.match(checked.warnings[0], /^stage-2[\\/]ENTRY\.md is ignored: only the ENTRY\.md at the workflow root is used/);
+  const dry = await cli(['run', ws.dir, '2.1', '--dry'], ws.dir);
+  assert.match(dry.output, /# Workflow instructions \(ENTRY\.md\)\nROOT RULES\n\n\n# Step 2\.1 \(stage-2[\\/]2\.1\.md\)\ntwo-one\n/);
+  assert.ok(!dry.output.includes('NESTED RULES'));
+  assert.equal(dry.warnings.length, 1);
+  const order = JSON.parse((await cli(['run', ws.dir, '--dry', '--json'], ws.dir)).output).steps.map(step => step.id);
+  assert.deepEqual(order, ['1.1', '1.2', '2.1', '2.2']);
+
+  // A folder called just "2" holding prompts must be rejected, never skipped.
+  const bare = await workspace(t, { '1.1.md': 'one', '2/2.1.md': 'two-one' });
+  await assert.rejects(cli(['check', bare.dir], bare.dir), { code: 'INVALID_STEP', message: /Directory needs a numeric prefix or stage-N name: 2\. .*for example stage-2\)/ });
+});

@@ -204,6 +204,7 @@ sources"), the output format. It is not a step and never runs on its own.
 | **Required** | a folder is a workflow because it contains `ENTRY.md`. awe also finds the workflow from any sub-folder by walking up to it. Missing: `ENTRY_NOT_FOUND`; empty: `EMPTY_ENTRY`. |
 | **Used** | on **every step of every run**. The prompt a step sends is `# Workflow instructions (ENTRY.md)`, your text, then `# Step 1.2 (…)`, the step's own prompt. `awe show 1.2 --prompt` prints exactly that. |
 | **Variables** | rendered like a prompt, so `{{ input.topic }}` works. It cannot use `{{ steps[...] }}`: it is added to the first step too, where no step has run yet. Put step references in the step's own prompt. |
+| **Only the root one** | an `ENTRY.md` in a sub-folder (`stage-2/ENTRY.md`) is **not** used for that folder's steps. `awe check` / `awe run` warn about it. There are no per-stage instructions: put them in that folder's step prompts, or in the root `ENTRY.md`. Running awe from inside `stage-2/` would treat that folder as its own, separate workflow. |
 | **Not** | a README for people (everything in it is sent, and paid for, on every step), not configuration (that is `awe.json`), and there is no per-stage or per-step override. |
 
 Lifecycle:
@@ -218,6 +219,17 @@ Lifecycle:
 
 Rule of thumb: if it is true for every step, it belongs in `ENTRY.md`; if it is true for one step, it belongs in that
 step's prompt; if it changes between runs, it belongs in `awe.json` `input` (`--var`).
+
+## Order, and what a step receives
+
+Steps run in numeric order, not file-name order: `1.1`, `1.2`, then everything in `stage-2/` (`2.1`, `2.2`), then `10.1` after
+`9.1`. A plain folder is a sequence; `FLOW.json` turns it into `parallel`, `if` or `loop`. A folder needs a numeric
+prefix (`2.1-review/`) or a `stage-N` name (`stage-2/`): a folder just called `2/` that holds prompts is rejected, with
+the name to use instead.
+
+A step receives exactly two things: the root `ENTRY.md`, then its own prompt, with `{{ … }}` filled in. It does not
+receive earlier steps' prompts or outputs, and the AI keeps no memory between steps. To use an earlier result, name it in
+the step's prompt: `{{ steps["1.1"].output }}` (the text) or `{{ steps["1.1"].artifact }}` (the file path).
 
 ## Workflow files
 

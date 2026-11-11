@@ -55,7 +55,7 @@ async function holdsWorkflowContent(root) {
     try { entries = await readdir(dir, { withFileTypes: true }); } catch { continue; }
     for (const entry of entries) {
       seen++;
-      if (entry.isFile() && (entry.name === 'FLOW.json' || /^\d+(?:\.\d+)+[-.].+\.md$/.test(entry.name))) return true;
+      if (entry.isFile() && (entry.name === 'FLOW.json' || (entry.name.endsWith('.md') && numbered.test(entry.name)))) return true;
       if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') pending.push(path.join(dir, entry.name));
     }
   }
@@ -78,6 +78,7 @@ export function outputLocations(config) {
 
 export async function discoverWorkflow(root, { outputs = [] } = {}) {
   const seen = new Set();
+  const ignoredEntries = [];
   const rootReal = await realpath(root);
   async function scan(dir, relative, enforceNumbered = true) {
     // Do not follow directory symlinks: a workflow must not escape its root while being discovered.
@@ -90,6 +91,7 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       validConfig(flow, relative || '.');
     }
     const children = [];
+    if (relative && entries.some(e => e.name === 'ENTRY.md' && e.isFile())) ignoredEntries.push(path.join(relative, 'ENTRY.md'));
     let sorted = entries.filter(e => e.isFile() || e.isDirectory()).filter(e => e.name !== 'FLOW.json');
     // Generated files are not workflow structure. Skip (1) a declared output file itself, whatever
     // it is called, and (2) a directory on the way to one unless it is real structure: a numbered
@@ -132,7 +134,7 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
         const match = numbered.exec(entry.name);
         const stage = stageDir.exec(entry.name);
         if (!match && !stage && enforceNumbered && !(await holdsWorkflowContent(path.join(dir, entry.name)))) continue; // scratch folder, not workflow
-        assertAwe(Boolean(match || stage || !enforceNumbered), 'INVALID_STEP', `Directory needs a numeric prefix or stage-N name: ${path.join(relative, entry.name)}. It contains workflow files, so rename it (for example stage-1-${entry.name}); a folder with no numbered prompts or FLOW.json is ignored`);
+        assertAwe(Boolean(match || stage || !enforceNumbered), 'INVALID_STEP', `Directory needs a numeric prefix or stage-N name: ${path.join(relative, entry.name)}. It contains workflow files, so rename it (for example ${/^\d+$/.test(entry.name) ? `stage-${entry.name}` : `stage-1-${entry.name}`}); a folder with no numbered prompts or FLOW.json is ignored`);
         if (match) {
           assertAwe(!seen.has(match[1]), 'DUPLICATE_STEP', `Duplicate step number ${match[1]}`);
           seen.add(match[1]);
@@ -146,6 +148,8 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
   }
   const tree = await scan(rootReal, '');
   assertAwe(tree.children.length > 0, 'EMPTY_WORKFLOW', 'No numbered steps found under ENTRY.md');
+  // Only the ENTRY.md at the workflow root is used. Report the others instead of ignoring them silently.
+  tree.ignoredEntries = ignoredEntries;
   return tree;
 }
 
