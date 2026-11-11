@@ -40,14 +40,14 @@ try {
   const packed = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', temp]));
   assert.equal(packed.length, 1, 'npm pack should create exactly one tarball');
   const items = packed[0].files.map(f => f.path);
-  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/dev-mode.md', 'src/dev.js', 'src/dev-store.js', 'src/outputs.js', 'examples/content-generation/ENTRY.md']) {
+  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/dev-mode.md', 'docs/tutorial.md', 'src/dev.js', 'src/dev-store.js', 'src/outputs.js', 'examples/content-generation/ENTRY.md', 'examples/README.md', 'examples/request-routing/ENTRY.md', 'examples/request-routing/awe.json', 'examples/request-routing/2.1-route/FLOW.json', 'examples/bounded-review/ENTRY.md', 'examples/bounded-review/awe.json', 'examples/bounded-review/2.1-review/FLOW.json', 'examples/executors/reply.cjs']) {
     assert.ok(items.includes(expected), `Missing from npm package: ${expected}`);
   }
   const excluded = items.filter(p => /(^|\/)(\.awe|\.git|node_modules|test|fixtures|\.github|scripts|\.agents)(\/|$)/.test(p) || /(^|\/)(\.env|\.npmrc)(\.|$)/.test(p));
   assert.deepEqual(excluded, [], `Unexpected development or sensitive files in npm package: ${excluded.join(', ')}`);
   // Drafts and planning notes are not part of the product; only these docs ship.
   const docs = items.filter(p => p.startsWith('docs/')).sort();
-  assert.deepEqual(docs, ['docs/dev-mode.md', 'docs/installation.md', 'docs/maintenance.md'], 'Unexpected documents in npm package');
+  assert.deepEqual(docs, ['docs/dev-mode.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/tutorial.md'], 'Unexpected documents in npm package');
   assert.deepEqual(items.filter(p => /(^|\/)draf/i.test(p) || /\.(jsonl|log)$/.test(p) || /(^|\/)\.salt$/.test(p) || /session\.json$/.test(p)), [], 'Drafts or execution data in npm package');
 
   const prefix = path.join(temp, 'isolated');
@@ -57,6 +57,15 @@ try {
   const example = path.join(prefix, 'node_modules', '@wahengchang', 'ai-workflow-engine', 'examples', 'content-generation', 'ENTRY.md');
   assert.match(runBin(prefix, ['validate', example]), /VALID/);
   assert.match(runBin(prefix, ['plan', example]), /1\.1/);
+  // Meaningful installed-package check: run the shipped request-routing example.
+  const installedExamples = path.join(prefix, 'node_modules', '@wahengchang', 'ai-workflow-engine', 'examples');
+  const routing = path.join(installedExamples, 'request-routing', 'ENTRY.md');
+  const routingPlan = runBin(prefix, ['plan', routing]);
+  assert.match(routingPlan, /2\.1\.1/);
+  assert.match(routingPlan, /2\.1\.2/);
+  const routingRun = JSON.parse(runBin(prefix, ['run', routing, '--json']));
+  assert.equal(routingRun.status, 'COMPLETED', JSON.stringify(routingRun.error));
+  assert.match(routingRun.steps['2.1.1'].outputPreview, /APPROVED/);
 
   // Exercise npm's actual bin resolution, not just node <installed>/bin/awe.js.
   assert.match(runNpm(['exec', '--prefix', prefix, '--offline', '--', 'awe', '--help'], temp), /awe/i);

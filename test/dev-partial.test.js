@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { workspace, put, dev, calls, countByStep, flow, agentArgs } from '../fixtures/dev-helpers.mjs';
+import { workspace, put, dev, calls, countByStep, flow, agentArgs } from './fixtures/dev-helpers.mjs';
 import { cli } from '../src/cli.js';
 import { precontext } from '../src/dev.js';
 
@@ -165,6 +165,14 @@ test('nested LOOP: occurrences are addressed separately from attempts', async t 
   await assert.rejects(dev(ws, ['--step', '1.1.2.1', '--invocation', '1.1-outer=9,1.1-outer/1.1.2-inner=1']), { code: 'INVOCATION_INVALID' });
   await assert.rejects(dev(ws, ['--step', '1.2', '--invocation', '1.1-outer=1']), { code: 'INVOCATION_INVALID' });
   assert.equal((await countByStep(ws.log))['1.1.2.1'], 4, 'rejected commands run nothing');
+});
+
+test('nested LOOP: invocation paths accept either separator', async t => {
+  const ws = await workspace(t, nestedLoop);
+  await dev(ws);
+  const target = await dev(ws, ['--step', '1.1.2.1', '--invocation', '1.1-outer=1,1.1-outer\\1.1.2-inner=1']);
+  assert.equal(target.status, 'COMPLETED', JSON.stringify(target.error));
+  assert.equal(target.dev.target.address, occurrence(1, 1), 'addresses are always reported with forward slashes');
 });
 
 test('nested LOOP: rerunning an occurrence keeps earlier occurrences and retires the later ones', async t => {

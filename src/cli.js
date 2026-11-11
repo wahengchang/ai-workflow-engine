@@ -10,6 +10,7 @@ import { validateTemplate } from './template.js';
 import { getExecutionMode } from './executor.js';
 import { initWorkflow } from './init.js';
 import { validateReferences } from './preflight.js';
+import { verifyPartial } from './partial.js';
 
 export function parseArgs(argv) {
   if (argv[0] === 'init') {
@@ -30,7 +31,7 @@ export function parseArgs(argv) {
   const flags = { input: {}, argv: [], acknowledge: [] };
   for (let i = 0; i < rest.length; i++) {
     const value = rest[i];
-    if (['--var', '--executor', '--command', '--arg', '--step', '--invocation', '--acknowledge'].includes(value) && rest[i + 1] === undefined) {
+    if (['--var', '--executor', '--command', '--arg', '--step', '--invocation', '--acknowledge', '--from', '--reuse'].includes(value) && rest[i + 1] === undefined) {
       throw new AweError('CLI_USAGE', `${value} requires a value`);
     }
     if (value === '--var') {
@@ -52,7 +53,11 @@ export function parseArgs(argv) {
     } else if (value === '--acknowledge') {
       flags.acknowledge.push(rest[++i]);
     } else if (value === '--fresh') flags.fresh = true;
-    else if (value === '--json') flags.json = true;
+    else if (value === '--from') {
+      flags.from = rest[++i];
+    } else if (value === '--reuse') {
+      flags.reuse = rest[++i];
+    } else if (value === '--json') flags.json = true;
     else throw new AweError('CLI_USAGE', `Unknown option: ${value}`);
   }
   if (command !== 'dev') {
@@ -63,7 +68,7 @@ export function parseArgs(argv) {
   return { command, target, flags };
 }
 
-const HELP = `awe — filesystem-first AI workflow engine (v0.1)\n\nUsage:\n  awe init [--template content] --out <new-directory>\n  awe validate <ENTRY.md|directory>\n  awe plan <ENTRY.md|directory> [--json]\n  awe simulate <ENTRY.md|directory> [--var name=value ...] [--json]\n  awe run <ENTRY.md|directory> [--executor echo|command] [--command executable] [--arg value ...] [--var name=value ...] [--json]\n  awe dev <ENTRY.md|directory> [--step id [--invocation loop=n,...]] [--fresh] [--acknowledge address ...] [executor/--var options as run] [--json]\n  awe status <run-id> [--json]              (run from project root)\n  awe inspect <run-id> [--step 1.2]         (run from project root)\n  awe explain <ENTRY.md|directory> [--step 1.2]\n\nsimulate always uses echo and never starts an external executor.\ndev tests part of a workflow: it reuses valid results from earlier dev commands (never from run), runs missing or stale\nprerequisites, executes --step <id> and stops there; without --step it completes the whole workflow from the cache.\n--fresh starts an empty dev session; --acknowledge <address> allows resending a command whose earlier outcome is unknown.\nSee docs/dev-mode.md.\nrun uses awe.json or CLI executor settings; without either, it defaults to echo.\nSIMULATED artifacts contain rendered prompts, not AI-generated content.\nFor an actual AI CLI use --executor command --command <binary> --arg <argument>.\n`;
+const HELP = `awe — filesystem-first AI workflow engine (v0.1)\n\nUsage:\n  awe init [--template content] --out <new-directory>\n  awe validate <ENTRY.md|directory>\n  awe plan <ENTRY.md|directory> [--json]\n  awe simulate <ENTRY.md|directory> [--var name=value ...] [--json]\n  awe run <ENTRY.md|directory> [--executor echo|command] [--command executable] [--arg value ...] [--var name=value ...] [--json]\n  awe run <ENTRY.md|directory> --from <step-or-numbered-group> --reuse <run-id> [--json]\n  awe dev <ENTRY.md|directory> [--step id [--invocation loop=n,...]] [--fresh] [--acknowledge address ...] [executor/--var options as run] [--json]\n  awe status <run-id> [--json]              (run from project root)\n  awe inspect <run-id> [--step 1.2]         (run from project root)\n  awe explain <ENTRY.md|directory> [--step 1.2]\n\nsimulate always uses echo and never starts an external executor.\nrun uses awe.json or CLI executor settings; without either, it defaults to echo.\n--from/--reuse rerun an exact suffix of a previous run of the same workflow:\nreused upstream artifacts are copied byte-identical, the source run stays\nunchanged, --var is rejected, and whole numbered groups are cuttable while\ntheir interior is not. Reused provenance is visible in status/inspect.\ndev tests part of a workflow: it reuses valid results from earlier dev commands (never from run), runs missing or stale\nprerequisites, executes --step <id> and stops there; without --step it completes the whole workflow from the cache.\n--fresh starts an empty dev session; --acknowledge <address> allows resending a command whose earlier outcome is unknown.\nSee docs/dev-mode.md.\nSIMULATED artifacts contain rendered prompts, not AI-generated content.\nFor an actual AI CLI use --executor command --command <binary> --arg <argument>.\n`;
 
 function prettyPlan(plan) {
   return plan.map(p => `${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
@@ -90,13 +95,26 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
     return { output: `Created ${entryFile}\nExecutor: echo (simulation; no AI calls).\nNext: use awe validate, awe plan, and awe simulate with the ENTRY.md path above.\nConfigure a command executor in awe.json before generating real content.`, code: 0 };
   }
   if (!target) throw new AweError('CLI_USAGE', `Missing argument.\n${HELP}`);
-  if (command === 'simulate' && (flags.executor !== undefined || flags.command !== undefined || flags.argv.length)) {
-    throw new AweError('CLI_USAGE', 'awe simulate always uses echo; executor options are only supported by awe run');
+  if (command === 'simulate' && (flags.executor !== undefined || flags.command !== undefined || flags.argv.length || flags.from !== undefined || flags.reuse !== undefined)) {
+    throw new AweError('CLI_USAGE', 'awe simulate always uses echo; executor and partial-rerun options are only supported by awe run');
+  }
+  const partialRequested = flags.from !== undefined || flags.reuse !== undefined;
+  if (partialRequested && command !== 'run') {
+    throw new AweError('CLI_USAGE', 'Partial rerun flags --from and --reuse are only supported by awe run');
+  }
+  if (command === 'run' && partialRequested) {
+    if (!flags.from || !flags.reuse) {
+      throw new AweError('CLI_USAGE', 'Partial rerun requires both --from <step-or-group> and --reuse <run-id>');
+    }
+    if (Object.keys(flags.input).length) {
+      throw new AweError('PARTIAL_VAR_REJECTED', 'Partial runs inherit the source input; --var is not supported with --from/--reuse');
+    }
   }
   if (['status', 'inspect'].includes(command)) {
     const state = await readRun(cwd, target);
     if (command === 'status') {
-      return { output: flags.json ? JSON.stringify(state, null, 2) : `${state.runId}: ${state.status}\n${executionSummary(state)}\n${state.mode === 'dev' ? `${devSummary(state)}\n` : ''}Steps: ${Object.keys(state.steps).length}\n${state.error ? `Error: ${state.error.code}: ${state.error.message}` : ''}`, code: 0 };
+      const partialLine = state.parentRunId ? `\nPartial: from ${state.from} of ${state.parentRunId} (reused ${Array.isArray(state.reusedSteps) ? state.reusedSteps.length : 0} steps)` : '';
+      return { output: flags.json ? JSON.stringify(state, null, 2) : `${state.runId}: ${state.status}\n${executionSummary(state)}\n${state.mode === 'dev' ? `${devSummary(state)}\n` : ''}Steps: ${Object.keys(state.steps).length}${partialLine}\n${state.error ? `Error: ${state.error.code}: ${state.error.message}` : ''}`, code: 0 };
     }
     const result = flags.step ? state.steps[flags.step] : state;
     if (!result) throw new AweError('STEP_NOT_FOUND', `No step ${flags.step} in run ${target}`);
@@ -140,7 +158,30 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
       code: result.status === 'COMPLETED' ? 0 : 1,
     };
   }
-  const result = await startRun(entry, tree, { executor, input: flags.input, signal: options.signal });
+  let runInput = flags.input;
+  let runInputSource;
+  let partial;
+  if (command === 'run' && partialRequested) {
+    // All verification below is read-only: before RunStore.initialize none of it
+    // creates a run directory or contacts an executor.
+    const source = await readRun(entry.root, flags.reuse).catch(() => {
+      throw new AweError('PARTIAL_SOURCE_NOT_FOUND', `Run ${flags.reuse} was not found under ${entry.root}`);
+    });
+    const prepared = await verifyPartial({ entry, tree, from: flags.from, source, reuseRunId: flags.reuse });
+    const mode = getExecutionMode(executor);
+    if ((source.executionMode ?? 'UNKNOWN') !== mode) {
+      throw new AweError('PARTIAL_MODE_MISMATCH', `Source run used execution mode ${source.executionMode ?? 'UNKNOWN'}; this run would use ${mode}`);
+    }
+    // Inherit the source input (defaults + carried --var values) verbatim.
+    runInput = { ...source.input };
+    runInputSource = { defaults: { ...(entry.config.input ?? {}) }, vars: { ...source.inputSource.vars } };
+    // The runtime executes the atomic suffix: the cut unit and everything after.
+    partial = {
+      parentRunId: prepared.parentRunId, from: prepared.from,
+      reusedSteps: prepared.reusedSteps, seeds: prepared.seeds, startNode: prepared.startNode,
+    };
+  }
+  const result = await startRun(entry, tree, { executor, input: runInput, inputSource: runInputSource, signal: options.signal, partial });
   return {
     output: flags.json ? JSON.stringify(result, null, 2) : `Run: ${result.runId}\nStatus: ${result.status}\n${executionSummary(result)}\nSteps: ${Object.keys(result.steps).length}${result.error ? `\nError: ${result.error.code}: ${result.error.message}` : ''}\nState: ${path.join(entry.root, '.awe', 'runs', result.runId, 'state.json')}`,
     code: result.status === 'COMPLETED' ? 0 : 1,

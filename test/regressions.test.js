@@ -13,7 +13,7 @@ import { startRun } from '../src/runtime.js';
 import { renderTemplate } from '../src/template.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const agent = path.join(root, 'fixtures/fake-agent.cjs');
+const agent = path.join(root, 'test/fixtures/fake-agent.cjs');
 const command = { type: 'command', argv: [process.execPath, agent], timeoutMs: 5000 };
 async function fixture(t, files, config = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'awe-regression-'));

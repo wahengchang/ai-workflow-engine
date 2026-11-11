@@ -69,7 +69,10 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       validConfig(flow, relative || '.');
     }
     const children = [];
-    let sorted = entries.filter(e => e.isFile() || e.isDirectory()).filter(e => e.name !== 'FLOW.json');
+    let sorted = entries.filter(e => (e.isFile() || e.isDirectory()) && !e.name.startsWith('.')).filter(e => e.name !== 'FLOW.json');
+    // Hidden entries (including macOS AppleDouble files such as ._FLOW.json) are ignored
+    // consistently in every group type so strict IF-group checks stay trustworthy; the
+    // files themselves are never touched.
     // Generated files are not workflow structure. Skip (1) a declared output file itself, whatever
     // it is called, and (2) a directory on the way to one unless it is real structure: a numbered
     // step/stage directory or a branch of this IF. This runs before any IF validation below.
@@ -93,13 +96,9 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       assertAwe(sorted.every(e => branches.includes(e.name)), 'INVALID_FLOW', `Unexpected files in IF group ${relative}`);
       return { type: 'if', relative, config: flow, children };
     }
-    sorted = sorted.filter(e => e.name !== 'ENTRY.md' && e.name !== 'awe.json' && e.name !== '.awe');
-    sorted = sorted.filter(e => {
-      if (e.name.startsWith('.')) return false;
-      if (e.isFile() && !e.name.endsWith('.md')) return false;
-      return true;
-    });
-    for (const entry of sorted.sort(comparePos)) {
+    const sequential = sorted.filter(e => e.name !== 'ENTRY.md' && e.name !== 'awe.json')
+      .filter(e => e.isFile() ? e.name.endsWith('.md') : true);
+    for (const entry of sequential.sort(comparePos)) {
       if (entry.isFile()) {
         const match = numbered.exec(entry.name);
         assertAwe(Boolean(match), 'INVALID_STEP', `Prompt must have numeric prefix: ${path.join(relative, entry.name)}`);

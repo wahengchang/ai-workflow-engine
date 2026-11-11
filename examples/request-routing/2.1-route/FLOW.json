@@ -1,0 +1,8 @@
+{
+  "type": "if",
+  "test": "{{ steps[\"1.1\"].output }}",
+  "equals": "APPROVED",
+  "elseEquals": "REJECTED",
+  "then": "approved",
+  "else": "rework"
+}

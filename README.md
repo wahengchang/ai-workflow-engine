@@ -19,6 +19,8 @@ See the detailed [installation, update and uninstall guide](docs/installation.md
 
 ## Quick start
 
+New here? The [15-minute tutorial](docs/tutorial.md) walks through create → simulate → run → partial rerun using only the echo executor.
+
 Requires Node.js >=20. Clone this repository and enter it first, unless it is already checked out.
 
 ```sh
@@ -206,8 +208,37 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 | `awe simulate PATH [--var key=value] [--json]` | Use echo only; save rendered prompts and label the run SIMULATED |
 | `awe run PATH ... [--json]` | Use the selected/configured executor; save artifacts and event trace |
 | `awe dev PATH [--step ID [--invocation LOOP=N,...]] [--fresh] [--acknowledge ADDRESS] ...` | Partial execution with reuse of valid dev results; [details](docs/dev-mode.md) |
-| `awe status RUN_ID` | Summarize stored run status |
+| `awe run PATH --from ID --reuse RUN_ID [--json]` | Partial rerun: execute an exact suffix of a previous run |
+| `awe status RUN_ID` | Summarize stored run status (including partial rerun provenance) |
 | `awe inspect RUN_ID --step 1.2` | Inspect step state (without `--step`, full run trace) |
+
+## Partial rerun
+
+`awe run PATH --from 2.1 --reuse RUN_ID` re-executes only a suffix of a
+previous run of the same workflow. The ID may address a prompt step or a whole
+numbered IF/LOOP/PARALLEL group; cuts never enter a control group, and
+sequence folders stay transparent. The new run — never the source — records
+`parentRunId`, `from` and `reusedSteps`, plus fingerprints (topology, ENTRY,
+input, prompt/FLOW hashes, artifact hashes and declared-output-file hashes) so
+later reruns can validate them. `status`/`inspect`/`--json` display reuse
+provenance, and reused steps carry `reused: true` with `originRunId`.
+
+Guards, all checked before any run directory is created or any executor
+starts: only terminal sources (`COMPLETED`, `FAILED`, `INTERRUPTED`) are
+accepted and only when every required upstream step completed; legacy runs
+without fingerprints are readable but not reusable; rejected are `--var`
+(inherited input covers it), unpaired flags, unknown/in-interior cuts,
+changed topology/ENTRY/input defaults/upstream prompts or upstream control
+config, missing or altered upstream artifacts or output files (including
+symlink escapes out of the source run), workflow mismatch, and a different
+execution mode. `FAILED`/`INTERRUPTED` partial reruns persist the already-seeded
+reuse provenance with their terminal status. Partial reruns of partial runs
+work when the metadata is complete. Reused artifacts and declared output files
+are copies inside the new run, so template `artifact` and `files` references
+resolve there; absolute paths embedded inside older outputs remain historical
+text. See [examples/README.md](examples/README.md) for a runnable journey.
+
+## Compatibility
 
 A compatible Skill wrapper is provided at `.agents/skills/awe/SKILL.md`.
 

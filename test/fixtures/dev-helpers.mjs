@@ -1,12 +1,13 @@
-// Shared helpers for the dev-mode tests (kept outside test/ so node --test does not run it).
+// Shared helpers for the dev-mode tests. npm test lists the test files explicitly,
+// so this helper is never discovered and executed as a test by node --test.
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cli } from '../src/cli.js';
+import { cli } from '../../src/cli.js';
 
-export const projectRoot = fileURLToPath(new URL('../', import.meta.url));
-export const agent = path.join(projectRoot, 'fixtures', 'dev-agent.cjs');
+export const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
+export const agent = path.join(projectRoot, 'test', 'fixtures', 'dev-agent.cjs');
 export const flow = JSON.stringify;
 
 // A temporary workflow plus the call log its fake agent writes.
