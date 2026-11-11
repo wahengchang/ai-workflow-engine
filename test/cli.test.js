@@ -323,3 +323,35 @@ test('a folder a step creates as scratch space does not break later commands', a
   await put(ws.dir, 'extra/FLOW.json', '{"type":"parallel"}');
   await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'INVALID_STEP' });
 });
+
+test('a step that reruns although the cache is on says why; ENTRY.md is documented where it is used', async t => {
+  const ws = await workspace(t, steps);
+  await put(ws.dir, 'ENTRY.md', 'Be concise.');
+  const reasons = out => Object.fromEntries([...out.matchAll(/^ {2}(\d\.\d) +ran +\S+(?: +\((.+?)\))? +->/gm)].map(match => [match[1], match[2] ?? null]));
+  assert.deepEqual(reasons((await cli(['run', ws.dir, '1.2'], ws.dir)).output), { '1.1': 'not cached yet', '1.2': null }, 'a named step needs no reason');
+  assert.deepEqual(reasons((await cli(['run', ws.dir, '1.3'], ws.dir)).output), { '1.3': null });
+
+  await put(ws.dir, 'ENTRY.md', 'Be VERY concise.');
+  const afterEntry = (await cli(['run', ws.dir, '1.2'], ws.dir)).output;
+  assert.deepEqual(reasons(afterEntry), { '1.1': 'ENTRY.md changed', '1.2': null });
+
+  await put(ws.dir, '1.1-a.md', 'OUTPUT::a edited#{n}');
+  assert.deepEqual(reasons((await cli(['run', ws.dir, '1.3'], ws.dir)).output), { '1.1': 'its prompt file changed', '1.2': 'an earlier step ran again', '1.3': null });
+
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${(await import('../fixtures/helpers.mjs')).agentCommand(ws.log, ['--x'])}` }));
+  assert.match((await cli(['run', ws.dir, '1.2'], ws.dir)).output, /^ {2}1\.1 +ran +\S+ +\(its command changed\)/m);
+  assert.deepEqual(reasons((await cli(['run', ws.dir, '--no-cache'], ws.dir)).output), { '1.1': null, '1.2': null, '1.3': null }, 'no reason when you asked for a rerun');
+});
+
+test('check reports the size of ENTRY.md; ENTRY.md may not use step outputs and says why', async t => {
+  const ws = await workspace(t, steps);
+  await put(ws.dir, 'ENTRY.md', 'x'.repeat(50));
+  const small = await cli(['check', ws.dir], ws.dir);
+  assert.match(small.output, /^ENTRY\.md {2}50 characters, added to the prompt of every step$/m);
+  assert.deepEqual(JSON.parse((await cli(['check', ws.dir, '--json'], ws.dir)).output).entry, { characters: 50, addedToSteps: 3 });
+  await put(ws.dir, 'ENTRY.md', 'x'.repeat(4500));
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /4500 characters.*That is large: every step pays for it, and any edit reruns every step/);
+  await put(ws.dir, 'ENTRY.md', 'See {{ steps["1.1"].output }}');
+  await assert.rejects(cli(['check', ws.dir], ws.dir), { code: 'MISSING_REFERENCE', message: /ENTRY\.md \(while preparing step 1\.1\).*can only use \{\{ input\.\* \}\}.*step's own prompt/s });
+  await assert.rejects(cli(['check', path.join(ws.dir, '..', 'no-such-folder')]), { code: 'ENTRY_NOT_FOUND' });
+});

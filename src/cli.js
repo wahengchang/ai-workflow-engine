@@ -205,7 +205,7 @@ async function initCommand({ dir }, cwd, options = {}) {
   lines.push(agent
     ? `Executor  ${agent.run}   (found ${agent.name} on PATH; change "run" in awe.json to use another)`
     : 'Executor  none found on PATH. Add one to awe.json, e.g.  "run": "claude -p {prompt}"');
-  lines.push('', `Next  cd ${into}`, '      awe run --dry     preview every prompt; calls nothing');
+  lines.push('ENTRY.md  instructions added to the prompt of every step; keep it short', '', `Next  cd ${into}`, '      awe run --dry     preview every prompt; calls nothing');
   lines.push(agent ? '      awe run 1.1       run the first step for real' : '      awe check         shows what is missing');
   return { output: lines.join('\n'), code: 0, warnings: [] };
 }
@@ -225,9 +225,11 @@ async function checkCommand({ dir, flags }, cwd) {
   const problems = used.filter(item => !item.display || !item.found);
   // The exit code answers "is the workflow valid?" (invalid workflows throw, exit 2). A missing executor is
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
-  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, promptSteps: promptIds.length, plan, executors: used };
+  const entryChars = entry.instructions.length;
+  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, entry: { characters: entryChars, addedToSteps: promptIds.length }, promptSteps: promptIds.length, plan, executors: used };
   if (flags.json) return { output: JSON.stringify(result, null, 2), code: 0, warnings: entry.settings.warnings };
-  const lines = [`VALID ${path.relative(cwd, entry.entryFile) || 'ENTRY.md'} (${promptIds.length} prompt steps)`, prettyPlan(plan), ''];
+  const lines = [`VALID ${path.relative(cwd, entry.entryFile) || 'ENTRY.md'} (${promptIds.length} prompt steps)`];
+  lines.push(`ENTRY.md  ${entryChars} characters, added to the prompt of every step${entryChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`, prettyPlan(plan), '');
   for (const item of used) {
     if (!item.display) lines.push(`Executor  ${item.name}: NOT CONFIGURED`);
     else lines.push(`Executor  ${item.name}: ${item.display}   ${item.found ? `(found: ${item.found})` : `NOT READY — "${item.executable}" was not found on PATH`}`);

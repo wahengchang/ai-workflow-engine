@@ -299,6 +299,30 @@ async function walk(node, context, sh, scope) {
   throw new AweError('INVALID_FLOW', `Unsupported flow type ${node.type}`);
 }
 
+// ── Why a step runs again ───────────────────────────────────────────────────
+// Ordered by what a person can act on. `prompt` is derived from the others, so it is only named when
+// nothing else explains the change.
+const REASONS = [
+  ['entry', 'ENTRY.md changed'],
+  ['source', 'its prompt file changed'],
+  ['executor', 'its command changed'],
+  ['outputs', 'its output declarations changed'],
+  ['control', 'its place in the workflow changed (IF branch or LOOP pass)'],
+  ['upstream', 'an earlier step ran again'],
+  ['plan', 'the workflow layout changed'],
+  ['address', 'the workflow layout changed'],
+  ['v', 'awe was upgraded'],
+];
+
+function whyRan(record, now) {
+  if (!record.latest) return record.lastFailure ? 'its previous attempt failed' : 'not cached yet';
+  const before = record.latest.parts;
+  if (!before) return undefined;
+  const reasons = [...new Set(REASONS.filter(([key]) => before[key] !== now[key]).map(([, text]) => text))];
+  if (!reasons.length && before.prompt !== now.prompt) reasons.push('its rendered prompt changed');
+  return reasons.slice(0, 2).join(', ') || undefined;
+}
+
 // ── Prompt steps ────────────────────────────────────────────────────────────
 function resultEntry(record, loaded, ord) {
   return { output: loaded.output, artifact: loaded.artifact, ...(loaded.files ? { files: loaded.files } : {}), resultId: record.resultId, ord };
@@ -365,20 +389,25 @@ async function walkPrompt(node, context, sh, scope) {
   const upstream = precontext(context, ord);
   const references = [...templateReferences(sh.entry.instructions), ...templateReferences(source)].filter(ref => ref.stepId);
   const inputs = [...new Map(references.map(ref => [ref.expression, { step: ref.stepId, field: ref.fileName ? `files.${ref.fileName}` : ref.field, resultId: context.steps[ref.stepId]?.resultId ?? null }])).values()];
-  const fingerprint = digestOf({
+  const parts = {
     v: FINGERPRINT_VERSION, plan: node.relative, address, control: scope.control,
     entry: sh.entryDigest, source: sha256(source), input: sh.inputDigest, executor: executorDigest,
     outputs: decls, upstream: upstream.map(([step, result]) => [step, result.resultId]), prompt: sha256(prompt),
-  });
+  };
+  const fingerprint = digestOf(parts);
+  // Keyed digests of each part, kept next to the result so a later run can say *what* changed.
+  const partDigests = Object.fromEntries(Object.entries(parts).map(([key, value]) => [key, secretDigest(sh.salt, value)]));
   const upstreamDigest = digestOf(upstream.map(([step, result]) => [step, result.resultId]));
 
   const record = session.ensure(address, id);
+  let cacheProblem = null;
   // The target is the thing being tested, so it always runs; everything else is reused when still valid
   // (unless the caller asked for no cache at all).
   if (!isTarget && sh.readCache && record.latest?.fingerprint === fingerprint) {
     const cached = await loadCached(sh, record.latest);
     if (cached.reason) {
       event(sh, 'CACHE_INVALID', node, { address, reason: cached.reason });
+      cacheProblem = cached.reason;
       await session.invalidate(address, cached.reason);
     } else {
       context.steps[id] = resultEntry(record.latest, cached, ord);
@@ -400,7 +429,9 @@ async function walkPrompt(node, context, sh, scope) {
 
   const attempt = (state.steps[id]?.attempts ?? 0) + 1;
   const startedAt = new Date().toISOString();
-  const entryState = { address, step: id, invocation, attempt, action: 'EXECUTED', status: 'RUNNING', executor: executor.name, fingerprint, upstreamDigest, inputs, startedAt, isTarget };
+  // Why this step runs although a cache is in use: the one thing a person cannot see from the output.
+  const reason = isTarget || !sh.readCache ? undefined : cacheProblem ? `its stored result is unusable: ${cacheProblem}` : whyRan(record, partDigests);
+  const entryState = { address, step: id, invocation, attempt, action: 'EXECUTED', status: 'RUNNING', executor: executor.name, ...(reason ? { reason } : {}), fingerprint, upstreamDigest, inputs, startedAt, isTarget };
   state.invocations.push(entryState);
   state.steps[id] = { ...(state.steps[id] ?? {}), attempts: attempt, status: 'RUNNING', source: node.relative, executor: executor.name };
   delete state.steps[id].error;
@@ -447,7 +478,7 @@ async function walkPrompt(node, context, sh, scope) {
     await hook(sh, 'beforeCommit', { address });
     // The commit is the only thing that makes a result reusable, and it is a single atomic file replace.
     await session.commit(address, {
-      resultId, runId: state.runId, attempt, fingerprint, completedAt: finishedAt, executor: executor.name,
+      resultId, runId: state.runId, attempt, fingerprint, parts: partDigests, completedAt: finishedAt, executor: executor.name,
       ...(keepPrompt && promptFile ? { prompt: path.relative(sh.store.dir, promptFile) } : {}),
       artifact: { path: path.relative(sh.store.dir, artifact), sha256: sha256(bytes), size: bytes.length },
       ...(files ? { files: Object.fromEntries(Object.entries(files).map(([name, file]) => [name, { ...file, path: path.relative(sh.store.dir, file.path) }])) } : {}),

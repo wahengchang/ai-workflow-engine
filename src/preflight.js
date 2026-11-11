@@ -11,7 +11,10 @@ export async function validateReferences(entry, tree, sources = new Map()) {
   function check(source, available, label) {
     for (const reference of templateReferences(source, label)) {
       if (reference.stepId && !available.has(reference.stepId)) {
-        throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} is not guaranteed to be available here (unknown, forward, parallel sibling, or conditional reference)`);
+        const hint = label.startsWith('ENTRY.md')
+          ? '\nENTRY.md is added to the prompt of every step, including the first, so it can only use {{ input.* }}. Refer to earlier steps from the step\'s own prompt.'
+          : '';
+        throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} is not guaranteed to be available here (unknown, forward, parallel sibling, or conditional reference)${hint}`);
       }
       if (reference.fileName && !outputs.get(reference.stepId)?.some(output => output.name === reference.fileName)) {
         throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} does not declare an output file named "${reference.fileName}" in awe.json`);

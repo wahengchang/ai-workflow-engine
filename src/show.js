@@ -58,7 +58,7 @@ export function renderSteps(state, root) {
     if (item.action === 'REUSED') {
       lines.push(`  ${name} cached   ${clock(item.from?.at ?? '')}`.trimEnd());
     } else if (item.status === 'COMPLETED') {
-      lines.push(`  ${name} ran      ${seconds(item.startedAt, item.finishedAt)}  -> ${rel(item.artifact)}`.trimEnd());
+      lines.push(`  ${name} ran      ${seconds(item.startedAt, item.finishedAt)}${item.reason ? `  (${item.reason})` : ''}  -> ${rel(item.artifact)}`.trimEnd());
     } else if (item.status === 'RUNNING') {
       lines.push(`  ${name} RUNNING`);
     } else {

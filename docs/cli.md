@@ -148,6 +148,10 @@ A stored result is reused only if all of this still holds:
 | rerun a step (`awe run 1.2`) | everything that could see its result is stale, **even if the new output is identical** |
 | a stored file or artifact | `CACHE_INVALID` is recorded; that step and its dependents run again |
 
+A step that runs although a cache is in use says why, in brackets: `(not cached yet)`, `(ENTRY.md changed)`, `(its prompt file
+changed)`, `(an earlier step ran again)`, `(its command changed)`, `(its previous attempt failed)`. A step you named, or a run
+with `--no-cache`, needs no reason.
+
 If a rerun fails, awe does not quietly fall back to the older success: later steps cannot be reused until that step
 succeeds again. Old attempts stay on disk (`awe show`).
 
@@ -189,6 +193,31 @@ workflow with a problem fails with exit `2`. A missing executor is reported (`NO
 Renders every prompt without calling anything. References to earlier results show as `[output of 1.1]` and
 `[file report of 1.1]`; every IF branch is shown, and a LOOP body once. Nothing is written: no run, no cache. A dry run
 checks wiring and wording; it says nothing about what a model will answer.
+
+## ENTRY.md
+
+`ENTRY.md` is the instructions every step shares: who the AI is working as, the audience, tone, rules ("never invent
+sources"), the output format. It is not a step and never runs on its own.
+
+| | |
+| --- | --- |
+| **Required** | a folder is a workflow because it contains `ENTRY.md`. awe also finds the workflow from any sub-folder by walking up to it. Missing: `ENTRY_NOT_FOUND`; empty: `EMPTY_ENTRY`. |
+| **Used** | on **every step of every run**. The prompt a step sends is `# Workflow instructions (ENTRY.md)`, your text, then `# Step 1.2 (…)`, the step's own prompt. `awe show 1.2 --prompt` prints exactly that. |
+| **Variables** | rendered like a prompt, so `{{ input.topic }}` works. It cannot use `{{ steps[...] }}`: it is added to the first step too, where no step has run yet. Put step references in the step's own prompt. |
+| **Not** | a README for people (everything in it is sent, and paid for, on every step), not configuration (that is `awe.json`), and there is no per-stage or per-step override. |
+
+Lifecycle:
+
+1. `awe init` writes a starting `ENTRY.md`.
+2. `awe check` validates its syntax and references and prints its size. It warns above 4,000 characters.
+3. Each `awe run` (and `awe run --dry`) reads it once at the start and renders it into every step's prompt.
+4. It is part of every step's fingerprint, so **editing it, even a comma, makes every step stale**. The next run that
+   uses the cache says so on each step it reruns: `1.1  ran  18s  (ENTRY.md changed)`. For a workflow with slow or costly
+   steps, settle `ENTRY.md` early and put anything that varies in the step prompts or in `input`.
+5. Run outputs keep the rendered prompt per attempt, so the exact text that was sent stays inspectable.
+
+Rule of thumb: if it is true for every step, it belongs in `ENTRY.md`; if it is true for one step, it belongs in that
+step's prompt; if it changes between runs, it belongs in `awe.json` `input` (`--var`).
 
 ## Workflow files
 
