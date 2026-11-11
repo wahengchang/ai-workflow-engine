@@ -379,22 +379,42 @@ test('awe.json marks the workflow root; a leftover ENTRY.md is reported, never u
   await put(bare, 'awe.json', '{"version": 2}');
   assert.match((await cli(['check', bare])).output, new RegExp(`^VALID ${path.basename(bare)} \\(1 prompt steps\\)`), 'the workflow is named, not "."');
 
-  // A v0.1 workflow: ENTRY.md and no awe.json. Say how to migrate instead of treating the folder as empty.
+  // A v0.1 workflow: ENTRY.md and no awe.json. Through the CLI (not just loadEntry), from the folder, by path and from below it.
   const v01 = await mkdtemp(path.join(os.tmpdir(), 'awe-v01-'));
   t.after(() => rm(v01, { recursive: true, force: true }));
-  await put(v01, 'ENTRY.md', 'Old rules.');
+  await put(v01, 'ENTRY.md', 'You are a "careful" writer.\nBe brief.\n');
   await put(v01, '1.1-a.md', 'x');
-  await assert.rejects(cli(['check', v01], v01), { code: 'WORKFLOW_NOT_FOUND', message: /Not inside a workflow/ });
-  await assert.rejects(import('../src/entry.js').then(({ loadEntry }) => loadEntry(v01)), { code: 'WORKFLOW_NOT_FOUND', message: /has an ENTRY\.md but no awe\.json\. awe no longer uses ENTRY\.md: create awe\.json containing \{"version": 2, "common"/ });
+  await put(v01, 'sub/placeholder.txt', 'x');
+  const migration = {
+    code: 'WORKFLOW_NOT_FOUND',
+    message: /has an ENTRY\.md but no awe\.json\. awe no longer uses ENTRY\.md\.\nCreate awe\.json with its text as "common", then delete ENTRY\.md:\n\{\n {2}"version": 2,\n {2}"common": \[\n {4}"You are a \\"careful\\" writer\.",\n {4}"Be brief\."\n {2}\]\n\}/,
+  };
+  await assert.rejects(cli(['check'], v01), migration);
+  await assert.rejects(cli(['check', v01]), migration);
+  await assert.rejects(cli(['run', '--dry'], path.join(v01, 'sub')), migration);
+  await assert.rejects(cli(['show'], v01), migration);
 
-  // With awe.json present, a leftover ENTRY.md is warned about and its text is not sent.
+  // With awe.json present, a leftover ENTRY.md is warned about (with the JSON to paste); its text is not sent.
   const ws = await workspace(t, steps);
-  await put(ws.dir, 'ENTRY.md', 'Old rules.');
+  await put(ws.dir, 'ENTRY.md', 'Old rules.\nSecond line.');
   const checked = await cli(['check', ws.dir], ws.dir);
-  assert.deepEqual(checked.warnings, ['ENTRY.md is no longer used, so its text is not sent to any step. Move it into awe.json as "common" (a string, or an array of lines), then delete the file.']);
+  assert.equal(checked.warnings.length, 1);
+  assert.match(checked.warnings[0], /^ENTRY\.md is no longer used, so its text is not sent to any step\. Add it to awe\.json as shown, then delete the file:\n {2}"common": \[\n {4}"Old rules\.",\n {4}"Second line\."\n {2}\]$/);
   assert.match(checked.output, /VALID .*\(3 prompt steps\)/, 'the leftover file is not mistaken for a prompt');
-  const dry = (await cli(['run', ws.dir, '1.1', '--dry'], ws.dir)).output;
-  assert.ok(!dry.includes('Old rules.'));
+  assert.ok(!(await cli(['run', ws.dir, '1.1', '--dry'], ws.dir)).output.includes('Old rules.'));
+  // The same signal is in the JSON document, where CI reads it.
+  for (const args of [['check', '--json'], ['run', '--dry', '--json']]) {
+    const json = JSON.parse((await cli([args[0], ws.dir, ...args.slice(1)], ws.dir)).output);
+    assert.equal(json.warnings.length, 1, args.join(' '));
+    assert.match(json.warnings[0], /^ENTRY\.md is no longer used/);
+  }
+  assert.equal(JSON.parse((await cli(['run', ws.dir, '1.1', '--json'], ws.dir)).output).warnings.length, 1);
+  // awe.json that already has "common": just delete the file.
+  await withCommon(ws, { common: 'New rules.' });
+  assert.deepEqual((await cli(['check', ws.dir], ws.dir)).warnings, ['ENTRY.md is no longer used and is ignored: awe.json already has "common". Delete the file.']);
+  // No warning, no "warnings" key.
+  await rm(path.join(ws.dir, 'ENTRY.md'));
+  assert.equal(JSON.parse((await cli(['check', ws.dir, '--json'], ws.dir)).output).warnings, undefined);
 });
 
 test('the common text is rendered trimmed: trailing newlines add no blank lines', async t => {

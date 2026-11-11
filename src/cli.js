@@ -182,6 +182,9 @@ async function prepare(cwd, dir) {
   return { entry, tree, promptIds, sources, outputs, warnings };
 }
 
+// JSON consumers (CI) do not read stderr: carry the warnings in the document itself.
+const withWarnings = (value, warnings) => (warnings.length ? { ...value, warnings } : value);
+
 function prettyPlan(plan) {
   return plan.map(p => `  ${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
 }
@@ -228,7 +231,7 @@ async function checkCommand({ dir, flags }, cwd) {
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
   const commonChars = (entry.common ?? '').trim().length;
   const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, addedToSteps: commonChars ? promptIds.length : 0 }, promptSteps: promptIds.length, plan, executors: used };
-  if (flags.json) return { output: JSON.stringify(result, null, 2), code: 0, warnings };
+  if (flags.json) return { output: JSON.stringify(withWarnings(result, warnings), null, 2), code: 0, warnings };
   const lines = [`VALID ${path.basename(entry.root)} (${promptIds.length} prompt steps)`];
   if (commonChars) lines.push(`Common    ${commonChars} characters (${entry.commonLabel}), added to the prompt of every step${commonChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`);
   lines.push(prettyPlan(plan), '');
@@ -252,7 +255,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
 
   if (flags.dry) {
     const rendered = await dryRun(entry, tree, { input: flags.input, step: target?.step, sources, outputs });
-    if (flags.json) return { output: JSON.stringify({ dry: true, steps: rendered }, null, 2), code: 0, warnings };
+    if (flags.json) return { output: JSON.stringify(withWarnings({ dry: true, steps: rendered }, warnings), null, 2), code: 0, warnings };
     const body = rendered.map(item => `──── ${item.id}  ${item.source} ────\n${item.prompt.trimEnd()}`).join('\n\n');
     const note = `DRY RUN — ${rendered.length} prompt${rendered.length === 1 ? '' : 's'} rendered; nothing was executed, no AI calls, no cache written.\nReferences to earlier steps appear as [output of 1.1]. Every IF branch is shown; a LOOP body once.`;
     return { output: `${note}\n\n${body}\n\n${note.split('\n')[0]}`, code: 0, warnings };
@@ -267,7 +270,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
     retry: flags.retry,
   });
   const code = state.status === 'COMPLETED' ? 0 : state.status === 'INTERRUPTED' ? 130 : 1;
-  if (flags.json) return { output: JSON.stringify(state, null, 2), code, warnings };
+  if (flags.json) return { output: JSON.stringify(withWarnings(state, warnings), null, 2), code, warnings };
 
   const lines = [
     `Workflow  ${path.basename(entry.root)} (${promptIds.length} steps in plan)    Executor  ${describeExecutors(entry.settings, promptIds, overrides, entry.root)}`,

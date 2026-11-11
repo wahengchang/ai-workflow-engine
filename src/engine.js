@@ -318,6 +318,7 @@ const REASONS = [
 function whyRan(record, now) {
   if (!record.latest) return record.lastFailure ? 'its previous attempt failed' : 'not cached yet';
   const before = record.latest.parts;
+  // A guard for the next fingerprint change: today's older records live in sessions that are no longer opened.
   if (!before) return 'written by an older awe';
   const reasons = [...new Set(REASONS.filter(([key]) => before[key] !== now[key]).map(([, text]) => text))];
   if (!reasons.length && before.prompt !== now.prompt) reasons.push('its rendered prompt changed');

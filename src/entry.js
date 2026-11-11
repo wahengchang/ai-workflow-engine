@@ -6,6 +6,19 @@ import { normalizeConfig } from './config.js';
 const STRAY_FILE = 'ENTRY.md'; // v0.1's file. Not used any more; only recognised so it is never ignored silently.
 const isFile = async file => { try { return (await stat(file)).isFile(); } catch { return false; } };
 
+// The JSON a person would have to write by hand, escaped for them.
+async function commonSnippet(file, indent = '  ') {
+  const lines = (await readFile(file, 'utf8')).trim().split(/\r?\n/);
+  const shown = lines.slice(0, 60).map(line => `${indent}  ${JSON.stringify(line)}`).join(',\n');
+  return `${indent}"common": [\n${shown}\n${indent}]${lines.length > 60 ? `\n${indent}(${lines.length - 60} more lines of ENTRY.md are not shown; add them the same way)` : ''}`;
+}
+
+// v0.1 kept the shared text in ENTRY.md. Say exactly what to write instead of a generic "not a workflow".
+export async function strayEntryError(dir) {
+  const snippet = await commonSnippet(path.join(dir, STRAY_FILE));
+  return new AweError('WORKFLOW_NOT_FOUND', `${dir} has an ENTRY.md but no awe.json. awe no longer uses ENTRY.md.\nCreate awe.json with its text as "common", then delete ENTRY.md:\n{\n  "version": 2,\n${snippet}\n}`);
+}
+
 // A workflow is a folder that holds awe.json (it may be just {"version": 2}). The text every step shares
 // is its optional "common" field.
 export async function loadEntry(target) {
@@ -18,9 +31,8 @@ export async function loadEntry(target) {
   const configFile = path.join(root, 'awe.json');
   const hasStray = await isFile(path.join(root, STRAY_FILE));
   if (!(await isFile(configFile))) {
-    throw new AweError('WORKFLOW_NOT_FOUND', hasStray
-      ? `${root} has an ENTRY.md but no awe.json. awe no longer uses ENTRY.md: create awe.json containing {"version": 2, "common": "<the text of ENTRY.md>"} (or "common": ["line 1", "line 2"]), then delete ENTRY.md.`
-      : `${root} is not a workflow: it has no awe.json.\nNext: create one with awe init <dir>, or add an awe.json containing {"version": 2} to this folder.`);
+    if (hasStray) throw await strayEntryError(root);
+    throw new AweError('WORKFLOW_NOT_FOUND', `${root} is not a workflow: it has no awe.json.\nNext: create one with awe init <dir>, or add an awe.json containing {"version": 2} to this folder.`);
   }
   let config;
   try {
@@ -31,7 +43,11 @@ export async function loadEntry(target) {
   assertAwe(typeof config === 'object' && config !== null && !Array.isArray(config), 'INVALID_CONFIG', 'awe.json must be an object');
   assertAwe(config.version === undefined || config.version === 1 || config.version === 2, 'INVALID_CONFIG', `Unsupported awe.json version ${JSON.stringify(config.version)}. Use "version": 2`);
   const settings = normalizeConfig(config);
-  if (hasStray) settings.warnings.push('ENTRY.md is no longer used, so its text is not sent to any step. Move it into awe.json as "common" (a string, or an array of lines), then delete the file.');
+  if (hasStray) {
+    settings.warnings.push(settings.common !== undefined
+      ? 'ENTRY.md is no longer used and is ignored: awe.json already has "common". Delete the file.'
+      : `ENTRY.md is no longer used, so its text is not sent to any step. Add it to awe.json as shown, then delete the file:\n${await commonSnippet(path.join(root, STRAY_FILE))}`);
+  }
   return { root, entryFile: configFile, common: settings.common ?? '', commonLabel: '"common" in awe.json', config, settings };
 }
 
@@ -44,10 +60,13 @@ export async function findWorkflowRoot(start) {
   } catch {
     throw new AweError('WORKFLOW_NOT_FOUND', `No such file or directory: ${current}`);
   }
+  let stray = null; // nearest folder on the way up that still has a v0.1 ENTRY.md
   for (;;) {
     if (await isFile(path.join(current, 'awe.json'))) return current;
+    if (!stray && await isFile(path.join(current, STRAY_FILE))) stray = current;
     const parent = path.dirname(current);
     if (parent === current) {
+      if (stray) throw await strayEntryError(stray);
       throw new AweError('WORKFLOW_NOT_FOUND', `Not inside a workflow (no awe.json in ${path.resolve(start)} or its parents).\nNext: cd into a workflow, pass its folder (awe run <dir>), create one with awe init <dir>, or add an awe.json containing {"version": 2} to an existing folder of prompts.`);
     }
     current = parent;

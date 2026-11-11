@@ -206,7 +206,7 @@ awe: warning: awe.json uses the deprecated "executor" block. Replace it with: "r
 - `awe check` 不因 executor 缺少而失敗。
 - run 標頭寫 `(N steps in plan)`；有 LOOP 重複時，摘要的計數單位改為 `step runs`，避免同一份輸出裡「step」指兩種東西。
 - 執行命令的顯示會保留 workflow 內存在的檔案（例如 `node agent.cjs`），讓兩個不同的 agent 看得出差別。
-- 共用文字：移除 `ENTRY.md`，改為 `awe.json` 的 `"common"` 欄位（字串或行陣列），`awe.json` 取代 `ENTRY.md` 成為 workflow 根標記；`ENTRY.md` 不再被讀取（留著會警告；沒有 `awe.json` 的 v0.1 資料夾會被拒絕並說明如何遷移），也不另設 `COMMON.md`。理由：`ENTRY.md` 同時承擔「每步附加文字」與「根標記」兩件事，名字又讓人以為是入口或第一步。
+- 共用文字：移除 `ENTRY.md`，改為 `awe.json` 的 `"common"` 欄位（字串或行陣列），`awe.json` 取代 `ENTRY.md` 成為 workflow 根標記；`ENTRY.md` 不再被讀取（留著會警告；沒有 `awe.json` 的 v0.1 資料夾會被拒絕，錯誤訊息直接附上可貼上的 `awe.json`，內容已跳脫；不另設 `awe migrate`，因為那是一次性的步驟，訊息已含結果。警告也會放進 `--json` 輸出的 `warnings`），也不另設 `COMMON.md`。理由：`ENTRY.md` 同時承擔「每步附加文字」與「根標記」兩件事，名字又讓人以為是入口或第一步。
 - `common` 的寫法：目前只支援字串或行陣列。審閱意見指出，多行 Markdown 規則放進 JSON 要跳脫引號、diff 也比檔案難讀；替代方案是另加 `commonFile`（相對路徑、限 workflow 內、不在 `.awe` 下）。決定先不做，因為最初的方向是移除這個檔案；若實際使用中常有超過約十行的共用規則，再以 `commonFile` 補上，不影響現有格式。
-- 重跑原因：cache 開啟時，非指定的步驟若重跑，會在該行註明原因（`(the common text changed)`、`(its prompt file changed)`…）；`awe check` 顯示 ENTRY.md 的長度；文件新增 ENTRY.md 一節（用途、使用時機、生命週期）。
+- 重跑原因：cache 開啟時，非指定的步驟若重跑，會在該行註明原因（`(the common text changed)`、`(its prompt file changed)`…）；`awe check` 顯示共用文字（`common`）的長度；文件新增「Common text」一節（用途、使用時機、生命週期）。
 - 目錄探索：不含編號 prompt 或 `FLOW.json` 的資料夾視為 scratch 並忽略，不再讓執行過程產生的資料夾使後續所有命令失敗。

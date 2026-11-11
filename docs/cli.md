@@ -237,7 +237,9 @@ prompt; if it changes between runs, it belongs in `input` (`--var`).
 
 There is no file for this on purpose: v0.1's `ENTRY.md` did two jobs under a misleading name (root marker and shared text),
 and a `COMMON.md` would only rename the problem. A leftover `ENTRY.md` is not used; `awe check` / `awe run` warn about it, and a
-folder that has an `ENTRY.md` but no `awe.json` is rejected with how to migrate.
+folder that has an `ENTRY.md` but no `awe.json` is rejected with the ready-to-paste `awe.json` (its lines already
+escaped as JSON). There is no `awe migrate` command: it is a one-time step, and the message already contains its result.
+With `--json`, such warnings are also in the output as `"warnings"`.
 
 ## Order, and what a step receives
 
