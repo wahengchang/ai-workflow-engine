@@ -1,6 +1,6 @@
 # Two user scenarios — AWE usability acceptance
 
-Status: proposal and acceptance scenarios for RFC 0001. These are **design cases**, not claims that v0.1 already runs all of these exact contracts.
+Status: proposal and acceptance scenarios for RFC 0001. These are **design cases**. The commands in Scenario A were written for v0.1; the current CLI equivalents are noted below ([RFC 0002](rfc-0002-cli-redesign.md), [cli.md](cli.md)).
 
 ## Scenario A — beginner: five prompts, one article
 
@@ -20,19 +20,19 @@ coffee/
 └── 3.2-final-edit.md
 ```
 
-**Desired actions** (future CLI):
+**Desired actions** (as of v0.2):
 
 ```sh
-awe init --template content --out coffee
-awe plan coffee
-awe simulate coffee --var topic="How to choose coffee beans"
-awe run coffee --executor <configured-real-ai-adapter> --var topic="How to choose coffee beans"
-awe outputs <run-id>
+awe init coffee
+awe check coffee
+awe run coffee --dry --var topic="How to choose coffee beans"
+awe run coffee --var topic="How to choose coffee beans"   # needs "run": "<ai command> {prompt}" in awe.json
+awe show coffee 3.2                                       # the final step's output
 ```
 
 Success: the writer sees ordered steps, knows simulation did not generate a real article, can locate the final artifact, and can inspect a failure without reading engine source.
 
-**Current status:** numbered prompts, `plan`, `run`, `simulate`, artifacts and `inspect` exist. Echo runs are labeled `SIMULATED` in CLI/state; no `init`, explicit final output map or provider-specific adapter yet. Simulation renders prompts without generating an article.
+**Current status (v0.2):** numbered prompts, `init`, `check`, `run`, `run --dry`, artifacts and `show` exist. There is no echo executor: without a configured command `awe run` fails with examples, and `--dry` renders prompts without generating an article. There is still no explicit final output map; `awe init` configures the first of claude/codex/opencode/omp found on PATH instead of a provider-specific adapter.
 
 ## Scenario B — senior engineer: a small but non-trivial content workflow
 
@@ -135,7 +135,7 @@ This is **not** two workflow engines. The novice writes only sequential Markdown
 | Parallel reviewer join | — | ✓ | Wait for all required siblings |
 | Review loop within budget | — | ✓ | Retain attempts, eventually complete |
 | Exhausted review loop | ✓ | ✓ | Bounded, inspectable failure |
-| Command executor missing | ✓ | ✓ | Doctor/preflight reports it |
-| Simulate with echo | ✓ | ✓ | Clearly marked SIMULATED |
+| Command executor missing | ✓ | ✓ | `awe check` reports `NOT READY`; `awe run` fails with examples |
+| Preview without an executor (`--dry`) | ✓ | ✓ | Prompts printed, nothing run or written |
 | Resume interrupted run | — | ✓ | Safe replay or explicit blocker |
 | Changed source mid-run | — | ✓ | Immutable plan or stop |

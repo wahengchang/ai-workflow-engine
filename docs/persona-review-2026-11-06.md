@@ -1,5 +1,7 @@
 # AWE design review — two user personas (2026-11-06)
 
+> Historical (v0.1): the commands it mentions (`simulate`, `validate`, `plan`, `inspect`, `init --out`) were replaced in v0.2, see [RFC 0002](rfc-0002-cli-redesign.md).
+>
 > Status: role-based reviews prepared by the assistant. **These are not claims of independent subagent executions or interviews.** The environment did not provide a delegatable subagent runner. Source baseline: `main` v0.1, audited through `README.md`, `src/{entry,discover,template,runtime,executor,storage,cli}.js`, and the test suite.
 
 ## Review method
