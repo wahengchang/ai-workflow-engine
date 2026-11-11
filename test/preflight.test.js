@@ -8,18 +8,18 @@ import { cli } from '../src/cli.js';
 async function fixture(t, files) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'awe-preflight-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const [name, source] of Object.entries({ 'ENTRY.md': '# Instructions', ...files })) {
+  for (const [name, source] of Object.entries({ 'awe.json': JSON.stringify({ version: 2, common: '# Instructions' }), ...files })) {
     await mkdir(path.dirname(path.join(dir, name)), { recursive: true });
     await writeFile(path.join(dir, name), source);
   }
   return dir;
 }
 
-test('unknown, forward and ENTRY step references fail before creating any run', async t => {
+test('unknown, forward and common-text step references fail before creating any run', async t => {
   for (const files of [
     { '1.1-a.md': 'a', '1.2-b.md': '{{ steps["9.9"].output }}' },
     { '1.1-a.md': '{{ steps["1.2"].output }}', '1.2-b.md': 'b' },
-    { 'ENTRY.md': '{{ steps["1.1"].artifact }}', '1.1-a.md': 'a' },
+    { 'awe.json': JSON.stringify({ version: 2, common: '{{ steps["1.1"].artifact }}' }), '1.1-a.md': 'a' },
   ]) {
     const dir = await fixture(t, files);
     for (const args of [['check'], ['run'], ['run', '--dry']]) {

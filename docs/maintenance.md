@@ -32,7 +32,7 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 - [ ] A precise change summary and supported environment/OS assumptions
 - [ ] Tests for any CLI, packaging, Skill frontmatter or versioning behavior changes
 - [ ] README, `docs/installation.md` and SKILL.md updated together if CLI commands changed
-- [ ] Compatibility notes for existing `awe.json` (and the legacy `ENTRY.md`), `FLOW.json` and numbered prompts
+- [ ] Compatibility notes for existing `awe.json`, `FLOW.json` and numbered prompts
 - [ ] No new credentials, tokens, `.env`, `.awe/runs`, `.awe/cache`, drafts, local files, or private content in the package
 - [ ] Clear handling for deprecated options and previous installed versions
 - [ ] `npm run check` and `npm run test:distribution` green (plus GitHub CI)

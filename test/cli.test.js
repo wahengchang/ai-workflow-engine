@@ -371,7 +371,7 @@ test('"common" is the text every step shares: a string or lines, optional, rende
   }
 });
 
-test('awe.json marks the workflow root; the v0.1 ENTRY.md still works, with a warning', async t => {
+test('awe.json marks the workflow root; a leftover ENTRY.md is reported, never used or ignored silently', async t => {
   const bare = await mkdtemp(path.join(os.tmpdir(), 'awe-bare-'));
   t.after(() => rm(bare, { recursive: true, force: true }));
   await put(bare, '1.1-a.md', 'x');
@@ -379,17 +379,29 @@ test('awe.json marks the workflow root; the v0.1 ENTRY.md still works, with a wa
   await put(bare, 'awe.json', '{"version": 2}');
   assert.match((await cli(['check', bare])).output, new RegExp(`^VALID ${path.basename(bare)} \\(1 prompt steps\\)`), 'the workflow is named, not "."');
 
-  const legacy = await workspace(t, steps);
-  await put(legacy.dir, 'ENTRY.md', 'Legacy rules.');
-  const checked = await cli(['check', legacy.dir], legacy.dir);
-  assert.deepEqual(checked.warnings, ['ENTRY.md is deprecated. Move its text into awe.json as "common" (a string, or an array of lines), then delete the file.']);
-  assert.match(checked.output, /^Common {4}13 characters \(ENTRY\.md\)/m, 'the line says where the text came from');
-  const dry = JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output);
-  assert.match(dry.steps[0].prompt, /^# Common instructions\nLegacy rules\.\n\n# Step 1\.1 /);
-  await withCommon(legacy, { common: 'New rules.' });
-  const both = await cli(['check', legacy.dir], legacy.dir);
-  assert.deepEqual(both.warnings, ['ENTRY.md is ignored because awe.json has "common". Delete the file.']);
-  assert.match(JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output).steps[0].prompt, /New rules\./);
+  // A v0.1 workflow: ENTRY.md and no awe.json. Say how to migrate instead of treating the folder as empty.
+  const v01 = await mkdtemp(path.join(os.tmpdir(), 'awe-v01-'));
+  t.after(() => rm(v01, { recursive: true, force: true }));
+  await put(v01, 'ENTRY.md', 'Old rules.');
+  await put(v01, '1.1-a.md', 'x');
+  await assert.rejects(cli(['check', v01], v01), { code: 'WORKFLOW_NOT_FOUND', message: /Not inside a workflow/ });
+  await assert.rejects(import('../src/entry.js').then(({ loadEntry }) => loadEntry(v01)), { code: 'WORKFLOW_NOT_FOUND', message: /has an ENTRY\.md but no awe\.json\. awe no longer uses ENTRY\.md: create awe\.json containing \{"version": 2, "common"/ });
+
+  // With awe.json present, a leftover ENTRY.md is warned about and its text is not sent.
+  const ws = await workspace(t, steps);
+  await put(ws.dir, 'ENTRY.md', 'Old rules.');
+  const checked = await cli(['check', ws.dir], ws.dir);
+  assert.deepEqual(checked.warnings, ['ENTRY.md is no longer used, so its text is not sent to any step. Move it into awe.json as "common" (a string, or an array of lines), then delete the file.']);
+  assert.match(checked.output, /VALID .*\(3 prompt steps\)/, 'the leftover file is not mistaken for a prompt');
+  const dry = (await cli(['run', ws.dir, '1.1', '--dry'], ws.dir)).output;
+  assert.ok(!dry.includes('Old rules.'));
+});
+
+test('the common text is rendered trimmed: trailing newlines add no blank lines', async t => {
+  const ws = await workspace(t, steps);
+  await withCommon(ws, { common: 'Rules.\n\n' });
+  const prompt = JSON.parse((await cli(['run', ws.dir, '1.1', '--dry', '--json'], ws.dir)).output).steps[0].prompt;
+  assert.equal(prompt, '# Common instructions\nRules.\n\n# Step 1.1 (1.1-a.md)\nOUTPUT::a#{n}\n');
 });
 
 test('a nested awe.json is reported and ignored; no step is dropped silently', async t => {
@@ -411,13 +423,6 @@ test('a nested awe.json is reported and ignored; no step is dropped silently', a
   // A folder called just "2" holding prompts must be rejected, never skipped.
   const bare = await workspace(t, { '1.1.md': 'one', '2/2.1.md': 'two-one' });
   await assert.rejects(cli(['check', bare.dir], bare.dir), { code: 'INVALID_STEP', message: /Directory needs a numeric prefix or stage-N name: 2\. .*for example stage-2\)/ });
-});
-
-test('a legacy ENTRY.md that ends with a newline adds no extra blank line to the prompt', async t => {
-  const legacy = await workspace(t, steps);
-  await put(legacy.dir, 'ENTRY.md', 'Legacy rules.\n\n');
-  const prompt = JSON.parse((await cli(['run', legacy.dir, '1.1', '--dry', '--json'], legacy.dir)).output).steps[0].prompt;
-  assert.equal(prompt, '# Common instructions\nLegacy rules.\n\n# Step 1.1 (1.1-a.md)\nOUTPUT::a#{n}\n');
 });
 
 test('a result written by an older awe is rerun with an honest reason', async t => {

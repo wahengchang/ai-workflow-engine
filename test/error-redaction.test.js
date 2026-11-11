@@ -13,7 +13,6 @@ test('executor stderr cannot copy argument credentials into CLI output or persis
   // A failing provider prints both full options and just their payloads.
   const program = `const args=process.argv.slice(1); process.stdin.resume(); process.stdin.on('end',()=>{process.stderr.write('Authentication failed: '+args.join(' ')+' '+args[0].split('=')[1]);process.exitCode=2;});`;
   const command = [process.execPath, '-e', program, '--', `--api-key=${secrets[0]}`, '--token', secrets[1], secrets[2]].map(token => JSON.stringify(token)).join(' ');
-  await writeFile(path.join(dir, 'ENTRY.md'), '# Instructions');
   await writeFile(path.join(dir, '1.1-run.md'), 'Run a command');
   await writeFile(path.join(dir, 'awe.json'), JSON.stringify({ version: 2, run: command }));
   const result = await cli(['run', dir, '--json']);

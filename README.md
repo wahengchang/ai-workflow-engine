@@ -116,7 +116,7 @@ Or a declared output file: {{ steps["1.1"].files["report"] }}
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored), and valid results are cached in `.awe/cache/`. No implicit cross-step model memory; state moves through declared values and artifact paths.
 
-The optional `"common"` text in `awe.json` (a string, or an array of lines) is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context, so it can use `{{ input.* }}` but not step outputs. Editing it makes every cached step stale (see [Common text](docs/cli.md#common-text-common-in-awejson)). A v0.1 `ENTRY.md` still works as a deprecated stand-in, with a warning; its content used to be passed through verbatim, so a literal `{{ ... }}` there now needs escaping as `\{{`.
+The optional `"common"` text in `awe.json` (a string, or an array of lines) is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context, so it can use `{{ input.* }}` but not step outputs. Editing it makes every cached step stale (see [Common text](docs/cli.md#common-text-common-in-awejson)). There is no separate file for it; v0.1's `ENTRY.md` is no longer used (a leftover one is reported).
 
 Input and step-output values are inserted verbatim, including any `{{ ... }}` they contain. To write literal braces in template source, escape the opening delimiter: `\{{first_name}}` renders as `{{first_name}}`, and `$\{{ secrets.X }}` renders as `${{ secrets.X }}`. In JSON strings, write the backslash as `\\`. An unescaped unsupported or unclosed expression is an `INVALID_TEMPLATE` error.
 

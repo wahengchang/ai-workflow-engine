@@ -19,7 +19,7 @@ const quote = JSON.stringify;
 async function fixture(t, files, config = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'awe-regression-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const [name, text] of Object.entries({ 'ENTRY.md': '# Instructions', 'awe.json': JSON.stringify(config), ...files })) {
+  for (const [name, text] of Object.entries({ 'awe.json': JSON.stringify({ common: '# Instructions', ...config }), ...files })) {
     await mkdir(path.dirname(path.join(dir, name)), { recursive: true });
     await writeFile(path.join(dir, name), text);
   }
@@ -87,12 +87,11 @@ test('template data is never reinterpreted and escaped literals render once', ()
   }
 });
 
-test('the command string, multiline --var, and braces round-trip through CLI and ENTRY', async t => {
+test('the command string, multiline --var, and braces round-trip through CLI and the common text', async t => {
   const dir = await fixture(t, {
-    'ENTRY.md': 'Audience: {{ input.mail }}; literal \\{{ audience }}',
     '1.1-copy.md': '{{ input.mail }}',
     '1.2-consume.md': '{{ steps["1.1"].output }}',
-  }, { version: 2, run: `${quote(process.execPath)} -e "process.stdin.pipe(process.stdout)"` });
+  }, { version: 2, common: 'Audience: {{ input.mail }}; literal \\{{ audience }}', run: `${quote(process.execPath)} -e "process.stdin.pipe(process.stdout)"` });
   const value = 'Hi {{first_name}}\n${{ secrets.X }}\r\n你好';
   const result = await cli(['run', dir, '--var', `mail=${value}`, '--json']);
   assert.equal(result.code, 0, result.output);
@@ -109,13 +108,13 @@ test('the command string, multiline --var, and braces round-trip through CLI and
   await assert.rejects(cli(['run', dir, '--executor', 'echo']), { code: 'UNKNOWN_EXECUTOR', message: /Available: run/ });
 });
 
-test('check and run reject invalid source syntax in ENTRY, prompts, and control expressions', async t => {
-  for (const files of [
-    { 'ENTRY.md': '{{ audience }}', '1.1-a.md': 'a' },
-    { '1.1-a.md': 'a', '1.2-b.md': '{{ input.broken' },
-    { '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }), '1.1-loop/1.1.1-a.md': 'a' },
+test('check and run reject invalid source syntax in the common text, prompts, and control expressions', async t => {
+  for (const [files, config] of [
+    [{ '1.1-a.md': 'a' }, { common: '{{ audience }}' }],
+    [{ '1.1-a.md': 'a', '1.2-b.md': '{{ input.broken' }, {}],
+    [{ '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }), '1.1-loop/1.1.1-a.md': 'a' }, {}],
   ]) {
-    const dir = await fixture(t, files);
+    const dir = await fixture(t, files, config);
     await assert.rejects(cli(['check', dir]), { code: 'INVALID_TEMPLATE' });
     await assert.rejects(cli(['run', dir]), { code: 'INVALID_TEMPLATE' });
     await assert.rejects(readdir(path.join(dir, '.awe')), { code: 'ENOENT' });
@@ -125,8 +124,8 @@ test('check and run reject invalid source syntax in ENTRY, prompts, and control 
 test('template errors name the file or step and line', async t => {
   const dir = await fixture(t, { '1.1-a.md': 'fine', '1.2-b.md': 'line one\nUse ${{ secrets.X }} here' });
   await assert.rejects(cli(['check', dir]), { code: 'INVALID_TEMPLATE', message: /1\.2-b\.md: .*line 2/ });
-  const entryDir = await fixture(t, { 'ENTRY.md': '# x\n{{ name }}', '1.1-a.md': 'a' });
-  await assert.rejects(cli(['check', entryDir]), { code: 'INVALID_TEMPLATE', message: /ENTRY\.md: .*line 2/ });
+  const entryDir = await fixture(t, { '1.1-a.md': 'a' }, { common: '# x\n{{ name }}' });
+  await assert.rejects(cli(['check', entryDir]), { code: 'INVALID_TEMPLATE', message: /"common" in awe\.json: .*line 2/ });
   const flowDir = await fixture(t, {
     '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }),
     '1.1-loop/1.1.1-a.md': 'a',

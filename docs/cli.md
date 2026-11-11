@@ -235,8 +235,9 @@ Lifecycle:
 Rule of thumb: if it is true for every step, it belongs in `"common"`; if it is true for one step, it belongs in that step's
 prompt; if it changes between runs, it belongs in `input` (`--var`).
 
-The v0.1 `ENTRY.md` file still works as a deprecated stand-in for both jobs (root marker and common text) and prints a
-warning; move its text into `"common"` and delete it.
+There is no file for this on purpose: v0.1's `ENTRY.md` did two jobs under a misleading name (root marker and shared text),
+and a `COMMON.md` would only rename the problem. A leftover `ENTRY.md` is not used; `awe check` / `awe run` warn about it, and a
+folder that has an `ENTRY.md` but no `awe.json` is rejected with how to migrate.
 
 ## Order, and what a step receives
 
@@ -383,7 +384,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `awe status`, `awe inspect`, `awe explain` | `awe show` |
 | `awe validate`, `awe plan` | `awe check` |
 | `awe init --template content --out DIR` | `awe init DIR` |
-| `ENTRY.md` (root marker and text added to every prompt) | `awe.json` marks the root; the shared text is its `"common"` field. `ENTRY.md` still works, with a deprecation warning |
+| `ENTRY.md` (root marker and text added to every prompt) | `awe.json` marks the root; the shared text is its `"common"` field. `ENTRY.md` is no longer used: a leftover one is reported, and a v0.1 folder without `awe.json` is rejected with the migration steps |
 
 The old `executor: { type, argv, timeoutMs }` block in `awe.json` still works and prints a deprecation warning with the
 replacement; `"type": "echo"` no longer exists. Old `.awe/runs` and `.awe/dev` folders are neither read nor deleted; `.awe/dev` (the v0.1 cache) is no longer used and is safe

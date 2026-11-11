@@ -59,13 +59,13 @@ test('init refuses existing files, empty directories and populated directories',
   await writeFile(path.join(dir, 'file'), 'keep');
   await mkdir(path.join(dir, 'empty'));
   await mkdir(path.join(dir, 'existing'));
-  await writeFile(path.join(dir, 'existing/ENTRY.md'), 'keep instructions');
+  await writeFile(path.join(dir, 'existing/awe.json'), 'keep instructions');
   for (const out of ['file', 'empty', 'existing']) {
     await assert.rejects(cli(['init', out], dir), { code: 'INIT_EXISTS' });
   }
   assert.equal(await readFile(path.join(dir, 'file'), 'utf8'), 'keep');
   assert.deepEqual(await readdir(path.join(dir, 'empty')), []);
-  assert.equal(await readFile(path.join(dir, 'existing/ENTRY.md'), 'utf8'), 'keep instructions');
+  assert.equal(await readFile(path.join(dir, 'existing/awe.json'), 'utf8'), 'keep instructions');
 });
 
 test('invalid init arguments fail without creating a destination', async t => {
@@ -79,8 +79,8 @@ test('invalid init arguments fail without creating a destination', async t => {
 test('init refuses a symlink without changing its destination', { skip: process.platform === 'win32' }, async t => {
   const dir = await workspace(t);
   await mkdir(path.join(dir, 'real'));
-  await writeFile(path.join(dir, 'real/ENTRY.md'), 'keep');
+  await writeFile(path.join(dir, 'real/awe.json'), 'keep');
   await symlink(path.join(dir, 'real'), path.join(dir, 'alias'));
   await assert.rejects(cli(['init', 'alias'], dir), { code: 'INIT_EXISTS' });
-  assert.equal(await readFile(path.join(dir, 'real/ENTRY.md'), 'utf8'), 'keep');
+  assert.equal(await readFile(path.join(dir, 'real/awe.json'), 'utf8'), 'keep');
 });

@@ -19,7 +19,7 @@
 - IF reads a rendered `test` expression and chooses one of two named subdirectories. LOOP runs its children up to `maxIterations`, then compares the rendered `until` expression with `equals`.
 - Control routing is deterministic. Unsupported expressions fail rather than evaluate arbitrary code.
 - `awe run --dry` renders prompts only (`src/dry.js`): it never starts a command, writes no run and no cache, and shows upstream results as placeholders. It cannot evaluate IF/LOOP gates, so it shows every branch and one loop pass.
-- `awe.json` marks the workflow root. Its optional `common` text (string or lines) is rendered and prepended to every step's prompt; it is part of every fingerprint, and a change is reported per step as `(the common text changed)`. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose. The v0.1 `ENTRY.md` is still read as a deprecated stand-in (`src/entry.js`).
+- `awe.json` marks the workflow root. Its optional `common` text (string or lines) is rendered and prepended to every step's prompt; it is part of every fingerprint, and a change is reported per step as `(the common text changed)`. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose. The v0.1 `ENTRY.md` is no longer read: a leftover one only produces a warning (`src/entry.js`).
 
 ## Variable grammar
 

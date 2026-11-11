@@ -2,12 +2,12 @@
 
 ## Goal
 
-Build a reusable, filesystem-first AI workflow interpreter accessed via a CLI named `awe`. A workflow author supplies an `awe.json` and numbered Markdown steps (v0.1 used `ENTRY.md`); the engine performs deterministic routing and saves every artifact and event.
+Build a reusable, filesystem-first AI workflow interpreter accessed via a CLI named `awe`. A workflow author supplies an `awe.json` and numbered Markdown steps (v0.1 used `ENTRY.md`, which is gone); the engine performs deterministic routing and saves every artifact and event.
 
 ## Milestone 0 — Executable foundation (first repository delivery)
 
 - [x] Node.js ESM package exposing `awe` executable without runtime dependencies
-- [x] Workflow loader (`ENTRY.md` in v0.1, `awe.json` since v0.2) and numeric folder / prompt resolver
+- [x] Workflow loader (`awe.json`; v0.1 used `ENTRY.md`) and numeric folder / prompt resolver
 - [x] `sequence`, `parallel`, `if` and bounded `loop` groups (`FLOW.json`)
 - [x] Strict prompt variables for inputs and step outputs / artifact paths
 - [x] `echo` smoke executor and arbitrary command-argv executor with stdin/stdout transport *(v0.2: echo removed; the executor is a command string, see below)*

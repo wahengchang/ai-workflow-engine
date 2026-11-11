@@ -91,7 +91,7 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       validConfig(flow, relative || '.');
     }
     const children = [];
-    if (relative) for (const name of ['awe.json', 'ENTRY.md']) if (entries.some(e => e.name === name && e.isFile())) ignoredEntries.push(path.join(relative, name));
+    if (relative && entries.some(e => e.name === 'awe.json' && e.isFile())) ignoredEntries.push(path.join(relative, 'awe.json'));
     let sorted = entries.filter(e => e.isFile() || e.isDirectory()).filter(e => e.name !== 'FLOW.json');
     // Generated files are not workflow structure. Skip (1) a declared output file itself, whatever
     // it is called, and (2) a directory on the way to one unless it is real structure: a numbered

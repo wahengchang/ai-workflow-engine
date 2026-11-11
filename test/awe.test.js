@@ -16,7 +16,7 @@ const executor = { name: 'run', argv: [process.execPath, fakeAgent], display: 'f
 async function fixture(t, files) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'awe-test-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  await writeFile(path.join(dir, 'ENTRY.md'), '# System context\nUse concise language.');
+  await writeFile(path.join(dir, 'awe.json'), JSON.stringify({ version: 2, common: ['# System context', 'Use concise language.'] }));
   for (const [filename, content] of Object.entries(files)) {
     await mkdir(path.dirname(path.join(dir, filename)), { recursive: true });
     await writeFile(path.join(dir, filename), content);
