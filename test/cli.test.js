@@ -56,7 +56,13 @@ test('a timeout names the limit, keeps stderr and suggests a longer --timeout', 
   const result = await cli(['run', ws.dir], ws.dir);
   assert.equal(result.code, 1);
   assert.match(result.output, /Command timed out after 0\.3s\. Raise it with --timeout <seconds> or "timeout" in awe\.json\./);
-  assert.match(result.output, /^Next {2}awe run 1\.1 --timeout 1 {4}\(limit now 0\.3s\) {3}· {3}awe show 1\.1 --err$/m);
+  assert.match(result.output, /run again with --retry 1\.1\./, 'the message itself says how to continue');
+  assert.match(result.output, /^Next {2}awe run 1\.1 --timeout 1 --retry 1\.1 {4}\(limit now 0\.3s\) {3}· {3}awe show 1\.1 --err$/m);
+  // The suggested command really works (no UNKNOWN_EFFECT dead end).
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: (await import('../fixtures/helpers.mjs')).agentCommand(ws.log), timeout: 0.3 }));
+  await put(ws.dir, '1.1-a.md', 'OUTPUT::a');
+  const followed = await cli(['run', ws.dir, '1.1', '--timeout', '1', '--retry', '1.1'], ws.dir);
+  assert.equal(followed.code, 0, followed.output);
   // --timeout beats awe.json
   const slow = await workspace(t, { '1.1-a.md': 'SLEEP::600\nOUTPUT::a' }, { timeout: 60 });
   const cut = await run(slow, ['--timeout', '0.2']);
@@ -185,7 +191,7 @@ test('check lists the plan and reports whether each executor exists', async t =>
   assert.equal(ok.code, 0);
   assert.match(ok.output, /^VALID .* \(3 prompt steps\)/);
   assert.match(ok.output, /prompt +1\.2 +1\.2-b\.md/);
-  assert.match(ok.output, /Executor {2}run: .* \(.* found: /);
+  assert.match(ok.output, /^Executor {2}run: \S+ … …   \(found: \S+\)$/m, 'the executable path appears once');
   assert.match(ok.output, /Next {2}awe run --dry {3}· {3}awe run 1\.1/);
 
   await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: 'awe-no-such-command-xyz -p {prompt}', executors: { other: 'ghost-cmd' }, steps: { '1.3': { executor: 'other' } } }));
@@ -212,4 +218,43 @@ test('removed commands say what replaced them; help is available everywhere', as
   for (const text of [(await cli(['--help'])).output]) {
     for (const flag of ['--var', '--cache', '--no-cache', '--dry', '--executor', '--timeout', '--retry', '--json']) assert.ok(text.includes(flag), `help documents ${flag}`);
   }
+});
+
+test('show follows a reused step to the run that produced it, and resolves LOOP occurrences', async t => {
+  const ws = await workspace(t, steps);
+  await cli(['run', ws.dir, '1.1'], ws.dir);
+  await cli(['run', ws.dir, '1.2'], ws.dir); // 1.1 is only referenced here
+  assert.match((await cli(['show', ws.dir, '1.1', '--prompt'])).output, /# Step 1\.1 /, 'the prompt of a cached step is found in the run that executed it');
+  const json = JSON.parse((await cli(['show', ws.dir, '1.1', '--json'])).output);
+  assert.equal(json.executor, 'run');
+  assert.ok(json.prompt && json.reused);
+
+  const loop = await workspace(t, {
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/1.1.1-draft.md': 'OUTPUT::draft#{n}',
+    '1.1-loop/1.1.2-gate.md': 'PASS_IF_NUM_GTE::3::{{ steps["1.1.1"].output }}',
+  });
+  assert.equal((await run(loop)).status, 'COMPLETED');
+  for (const n of [1, 2, 3]) assert.equal((await cli(['show', loop.dir, `1.1.1@${n}`])).output, `draft#${n}`);
+  assert.equal((await cli(['show', loop.dir, '1.1.1'])).output, 'draft#3', 'without @ it is the latest occurrence');
+  assert.match((await cli(['show', loop.dir, '1.1.1@2', '--prompt'])).output, /# Step 1\.1\.1 /);
+  await assert.rejects(cli(['show', loop.dir, '1.1.1@9']), { code: 'STEP_NOT_FOUND', message: /No recorded occurrence 1\.1\.1@9\. Occurrences seen: 1\.1\.1@1, 1\.1\.1@2, 1\.1\.1@3/ });
+});
+
+test('a failing step with a prompt over 32 KB reports EXECUTOR_FAILED instead of crashing', async t => {
+  const big = 'word '.repeat(9000);
+  const ws = await workspace(t, { '1.1-big.md': `${big}\nFAIL_IF_EXISTS::block.flag\nOUTPUT::ok`, 'block.flag': 'x' });
+  // Pass the prompt as an argument (the inline path), to a command that fails.
+  await put(ws.dir, 'fail.cjs', "process.stderr.write('quota exceeded\\n'); process.exit(3);");
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, run: `${JSON.stringify(process.execPath)} fail.cjs {prompt}` }));
+  const result = await cli(['run', ws.dir, '--json'], ws.dir);
+  assert.equal(result.code, 1);
+  const state = JSON.parse(result.output);
+  assert.equal(state.error.code, 'EXECUTOR_FAILED');
+  assert.match(state.error.message, /quota exceeded/);
+  assert.ok(!state.error.message.includes('word word'), 'the prompt is still redacted from the message');
+  // A plain non-zero exit is a known failure: the next run needs no --retry.
+  await rm(path.join(ws.dir, 'block.flag'));
+  const again = JSON.parse((await cli(['run', ws.dir, '--json'], ws.dir)).output);
+  assert.equal(again.error.code, 'EXECUTOR_FAILED');
 });

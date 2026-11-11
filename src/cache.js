@@ -1,14 +1,13 @@
-import { mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { AweError } from './errors.js';
-import { canonical } from './digest.js';
+import { canonical, digestOf } from './digest.js';
 
 // The result cache lives under .awe/cache/<session>/session.json. Every `awe run` records its
 // results here; a later run reuses them only when their fingerprint is still valid.
 export const SESSION_SCHEMA = 1;
-const SESSION_ID = /^cache-[\w-]+$/;
 const HISTORY_LIMIT = 20;
 
 export async function atomicWrite(file, text) {
@@ -200,31 +199,18 @@ async function markRunAbandoned(root, runId, stepId) {
   } catch { /* best effort: the session record already carries the facts */ }
 }
 
+// One session per workflow root + input, in a directory named after the digest of that identity, so
+// opening it is a single lookup however many inputs have been tried. A file that is missing, unreadable
+// or does not match is replaced: it is only a cache.
 export async function openSession(root, compat) {
   const base = path.join(root, '.awe', 'cache');
-  await mkdir(base, { recursive: true });
-  const wanted = canonical(compat);
-  {
-    const candidates = [];
-    for (const name of await readdir(base).catch(() => [])) {
-      if (!SESSION_ID.test(name)) continue;
-      const data = await readSession(path.join(base, name, 'session.json'));
-      if (data?.id === name && canonical(data.compat) === wanted) candidates.push(data);
-    }
-    candidates.sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt) || b.id.localeCompare(a.id));
-    if (candidates.length) {
-      const dir = path.join(base, candidates[0].id);
-      const lock = await acquireLock(dir, candidates[0].id);
-      // State may have changed between the scan and the lock: always continue from disk.
-      const data = await readSession(path.join(dir, 'session.json'));
-      if (data?.id === candidates[0].id && canonical(data.compat) === wanted) return new CacheSession(dir, data, lock, false);
-      await lock.release();
-    }
-  }
-  const id = `cache-${new Date().toISOString().replaceAll(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
+  const id = `cache-${digestOf(compat).slice(0, 32)}`;
   const dir = path.join(base, id);
   await mkdir(dir, { recursive: true });
   const lock = await acquireLock(dir, id);
+  // State may have changed since we last looked: always continue from disk, under the lock.
+  const data = await readSession(path.join(dir, 'session.json'));
+  if (data?.id === id && canonical(data.compat) === canonical(compat)) return new CacheSession(dir, data, lock, false);
   const now = new Date().toISOString();
   const session = new CacheSession(dir, { schema: SESSION_SCHEMA, id, createdAt: now, lastUsedAt: now, lastRunId: null, compat, records: {} }, lock, true);
   await session.save();

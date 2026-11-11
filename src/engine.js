@@ -104,8 +104,12 @@ const hook = (sh, stage, info) => sh.hooks?.[stage]?.(info);
 // }
 export async function runWorkflow(entry, tree, options = {}) {
   assertAwe(typeof options.resolveExecutor === 'function', 'INVALID_EXECUTOR', 'runWorkflow needs resolveExecutor');
-  const outputs = declaredOutputs(entry.config, tree);
-  await assertOutputLocations(entry.root, tree, outputs);
+  // The CLI has already validated the declarations; library callers get them validated here.
+  let outputs = options.outputs;
+  if (!outputs) {
+    outputs = declaredOutputs(entry.config, tree);
+    await assertOutputLocations(entry.root, tree, outputs);
+  }
   const info = indexTree(tree);
   const nodes = flatten(tree);
   const prompts = nodes.filter(node => node.type === 'prompt');
@@ -160,6 +164,7 @@ async function runInSession(entry, tree, { options, outputs, info, targetNode, i
   const sources = new Map();
   for (const node of flatten(tree)) {
     if (node.type !== 'prompt') continue;
+    if (options.sources?.has(node.file)) { sources.set(node.file, options.sources.get(node.file)); continue; }
     const text = await readFile(node.file, 'utf8');
     validateTemplate(text, node.relative);
     sources.set(node.file, text);
@@ -409,7 +414,7 @@ async function walkPrompt(node, context, sh, scope) {
     // The rendered prompt is what `awe show <step> --prompt` prints, and what {prompt_file} points at.
     // "storePrompts": false keeps it only for the moment the command needs it.
     if (keepPrompt || needsPromptFile(executor.argv, prompt)) promptFile = await sh.store.prompt(id, attempt, prompt);
-    if (keepPrompt) state.steps[id].prompt = promptFile;
+    if (keepPrompt) { state.steps[id].prompt = promptFile; entryState.prompt = promptFile; }
     await session.begin(address, id, { runId: state.runId, attempt, fingerprint, startedAt });
     began = true;
     await sh.store.save(state);
@@ -459,6 +464,10 @@ async function walkPrompt(node, context, sh, scope) {
     // After a kill or timeout the command may have done anything; a plain non-zero exit is a known failure.
     const unknownEffect = phase === 'execute' && (interrupted || error.code === 'EXECUTOR_TIMEOUT' || Boolean(error.signal));
     const tail = error.stderrTail ?? stderrTail;
+    if (unknownEffect) {
+      entryState.unknownOutcome = true;
+      if (error.code === 'EXECUTOR_TIMEOUT') error.message += ` The command may have acted before it was stopped, so run again with --retry ${displayAddress(address)}.`;
+    }
     Object.assign(entryState, { status: interrupted ? 'INTERRUPTED' : 'FAILED', finishedAt: new Date().toISOString(), error: { code: error.code ?? 'UNEXPECTED', message: error.message }, ...(tail ? { stderrTail: tail } : {}) });
     state.steps[id] = { ...state.steps[id], status: interrupted ? 'INTERRUPTED' : 'FAILED', error: entryState.error, ...(tail ? { stderrTail: tail } : {}) };
     event(sh, interrupted ? 'STEP_INTERRUPTED' : 'STEP_FAILED', node, { address, attempt, code: error.code ?? 'UNEXPECTED', message: error.message });

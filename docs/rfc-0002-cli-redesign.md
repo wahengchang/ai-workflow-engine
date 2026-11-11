@@ -55,6 +55,7 @@ awe check [dir]                    validate + plan + 檢查 executor 是否可�
 ```text
 awe show                  最近一次 run 的摘要：每步的狀態、是否來自 cache、輸出檔路徑
 awe show 1.2              1.2 的輸出文字
+awe show 2.1.1@2          LOOP 第 2 圈的輸出（位址寫法與 awe run 相同）
 awe show 1.2 --prompt     1.2 實際送出的渲染後 prompt
 awe show 1.2 --err        1.2 的 stderr（失敗或逾時時最有用）
 awe show --run <id>       指定某次 run，預設為最近一次
@@ -81,7 +82,7 @@ awe show --run <id>       指定某次 run，預設為最近一次
 - `run` 是預設 executor。`executors.<name>` 為具名 executor，可帶自己的 `timeout`。
 - `steps.<id>.executor` 與 `steps.<id>.timeout` 針對單一步驟覆蓋。優先順序：CLI flag > `steps.<id>` > 具名 executor > 頂層預設。
 - 檔案格式不動，所以不採用 prompt 檔 front-matter，per-step 設定留在 `awe.json`（`steps` 這個 key v0.1 就已存在，用於 output files）。
-- `steps.<id>.outputs`（named output files）維持 `docs/dev-mode.md` 的語意。
+- `steps.<id>.outputs`（named output files）維持 [cli.md](cli.md#output-files) 所述的語意。
 
 ### 命令字串與 `{prompt}`
 
@@ -128,7 +129,7 @@ $ awe run
 Cache     off — full run from 1.1 (use --cache to reuse valid steps)
 ```
 
-失效判定沿用 `docs/dev-mode.md` 的指紋規則：prompt、`ENTRY.md`、input、executor、上游結果任一改變，該步與其後的步驟失效；
+失效判定沿用 [cli.md](cli.md#cache) 所述的指紋規則：prompt、`ENTRY.md`、input、executor、上游結果任一改變，該步與其後的步驟失效；
 一旦某步重跑失敗，不會悄悄退回舊的成功結果。run 與 dev 合併成**同一套**儲存，不再有分開的 session。
 
 ## 6. 錯誤與提示範例
@@ -154,7 +155,7 @@ Next: cd into a workflow, pass its folder (awe run <dir>), or create one with: a
 - `--var` 與 cache 並用不再報錯：`--var` 改變 input 就是改變指紋，舊結果保留在舊 input 之下，新 input 另起一份。
 - 執行命令的顯示（run 標頭、`awe check`）只列出執行檔與單純的旗標，其他引數以 `…` 取代，避免命令列上的金鑰出現在終端機或 log。
 - 完整的 workflow 失敗後，輸出最後一行永遠是建議的下一條命令。
-- 退出碼：`0` 成功、`1` 某步失敗、`2` 用法或設定錯誤（awe 無法開始）、`130` / `143` 被中斷。`awe check` 在 workflow 有效時一律回 `0`，executor 缺少只標示 `NOT READY`。
+- 退出碼：`0` 成功、`1` 某步失敗、`2` 用法或設定錯誤（awe 無法開始）、`129` / `130` / `143`（SIGHUP / SIGINT / SIGTERM）被中斷。`awe check` 在 workflow 有效時一律回 `0`，executor 缺少只標示 `NOT READY`。
 
 ## 7. 被移除的東西
 

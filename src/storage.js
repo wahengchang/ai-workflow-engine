@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -39,9 +39,4 @@ export class RunStore {
     await writeFile(file, content, 'utf8');
     return file;
   }
-}
-
-export async function readRun(root, runId) {
-  if (!/^[\w-]+$/.test(runId)) throw new Error('Invalid run ID');
-  return JSON.parse(await readFile(path.join(root, '.awe', 'runs', runId, 'state.json'), 'utf8'));
 }

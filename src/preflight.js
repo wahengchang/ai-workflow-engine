@@ -4,7 +4,7 @@ import { templateReferences } from './template.js';
 import { assertOutputLocations, declaredOutputs } from './outputs.js';
 
 // Model the first iteration and all possible branches, without executing a gate.
-export async function validateReferences(entry, tree) {
+export async function validateReferences(entry, tree, sources = new Map()) {
   // Also validates the awe.json output declarations (including parallel path conflicts).
   const outputs = declaredOutputs(entry.config, tree);
   await assertOutputLocations(entry.root, tree, outputs);
@@ -23,7 +23,7 @@ export async function validateReferences(entry, tree) {
     const available = new Set(upstream);
     if (node.type === 'prompt') {
       check(entry.instructions, available, `ENTRY.md (while preparing step ${node.id})`);
-      check(await readFile(node.file, 'utf8'), available, node.relative);
+      check(sources.get(node.file) ?? await readFile(node.file, 'utf8'), available, node.relative);
       available.add(node.id);
       return available;
     }
@@ -42,4 +42,5 @@ export async function validateReferences(entry, tree) {
     return result;
   }
   await visit(tree, new Set());
+  return outputs;
 }

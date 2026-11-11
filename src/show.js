@@ -84,7 +84,41 @@ export function cacheLine(state) {
     : 'off — full run from the first step (--cache reuses valid steps)';
 }
 
-export async function show(root, { step, runId, prompt = false, err = false, json = false } = {}) {
+// A run that reused a step only keeps a pointer to the run that executed it. The prompt, executor and
+// stderr live in that run, so follow the pointer.
+async function originOf(root, record) {
+  if (!record?.reused) return record;
+  try {
+    const source = await loadRun(root, record.reused.runId);
+    const origin = source.steps?.[record.step ?? ''] ?? null;
+    return origin ? { ...origin, reused: record.reused } : record;
+  } catch {
+    return record;
+  }
+}
+
+// `awe show 1.1.1@2`: one LOOP occurrence, found among the invocations a run recorded.
+async function occurrenceOf(root, states, step, wanted, need) {
+  const seen = new Set();
+  for (const state of states) {
+    for (const item of [...(state.invocations ?? [])].reverse()) {
+      if (item.step !== step) continue;
+      const shown = displayAddress(item.address);
+      seen.add(shown);
+      if (shown !== wanted) continue;
+      let record = item;
+      if (item.action === 'REUSED' && item.from) {
+        const source = await loadRun(root, item.from.runId).catch(() => null);
+        record = source?.invocations?.find(other => other.address === item.address && other.attempt === item.from.attempt && other.action === 'EXECUTED') ?? item;
+      }
+      if (need === 'text' ? record.status === 'COMPLETED' && record.artifact : need === 'prompt' ? record.prompt : true) return { runId: state.runId, record };
+    }
+  }
+  const known = [...seen].sort();
+  throw new AweError('STEP_NOT_FOUND', `No recorded occurrence ${wanted}.${known.length ? ` Occurrences seen: ${known.join(', ')}` : ` Step ${step} has no record yet. Next: awe run ${wanted}`}`);
+}
+
+export async function show(root, { step, occurrence, runId, prompt = false, err = false, json = false } = {}) {
   const states = await runsNewestFirst(root, runId);
   if (!states.length) throw new AweError('RUN_NOT_FOUND', 'Nothing has run yet in this workflow.\nNext: awe run 1.1   (or preview the prompts first: awe run --dry)');
 
@@ -103,8 +137,16 @@ export async function show(root, { step, runId, prompt = false, err = false, jso
     return { output: lines.join('\n'), code: 0 };
   }
 
-  // A step's result may come from an earlier run (a later run reused it), so look back through runs.
   const wantsText = !prompt && !err;
+  if (occurrence) {
+    const { runId: foundIn, record } = await occurrenceOf(root, states, step, occurrence, wantsText ? 'text' : prompt ? 'prompt' : 'any');
+    if (json) return { output: JSON.stringify({ run: foundIn, step: occurrence, ...record }, null, 2), code: 0 };
+    if (prompt) return { output: (await readFile(record.prompt, 'utf8')).trimEnd(), code: 0 };
+    if (err) return { output: record.stderrTail ?? '', code: 0 };
+    return { output: (await readFile(record.artifact, 'utf8')).trimEnd(), code: 0 };
+  }
+
+  // A step's result may come from an earlier run (a later run reused it), so look back through runs.
   const holder = states.find(state => {
     const found = state.steps?.[step];
     if (!found) return false;
@@ -114,7 +156,7 @@ export async function show(root, { step, runId, prompt = false, err = false, jso
     const known = [...new Set(states.flatMap(state => Object.keys(state.steps ?? {})))];
     throw new AweError('STEP_NOT_FOUND', `Step ${step} has no ${wantsText ? 'result' : 'record'} yet${known.length ? ` (steps seen so far: ${known.join(', ')})` : ''}.\nNext: awe run ${step}`);
   }
-  const found = holder.steps[step];
+  const found = await originOf(root, { ...holder.steps[step], step });
   if (json) return { output: JSON.stringify({ run: holder.runId, step, ...found }, null, 2), code: 0 };
   if (prompt) {
     if (!found.prompt) throw new AweError('PROMPT_NOT_STORED', `The prompt of step ${step} was not saved ("storePrompts": false in awe.json). Preview it with: awe run ${step} --dry`);

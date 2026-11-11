@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { loadEntry, findWorkflowRoot } from './entry.js';
 import { discoverWorkflow, flatten, outputLocations } from './discover.js';
 import { getPlan } from './runtime.js';
-import { runWorkflow, parseStepArg } from './engine.js';
+import { runWorkflow, parseStepArg, displayAddress } from './engine.js';
 import { dryRun } from './dry.js';
 import { AweError } from './errors.js';
 import { validateTemplate } from './template.js';
@@ -44,7 +44,7 @@ Configure the AI command in awe.json:  "run": "claude -p {prompt}"
   {prompt} the rendered prompt (very long prompts become a file path automatically)
   {prompt_file} the path of the saved prompt file    (no placeholder: sent on stdin)
 
-Exit codes: 0 ok · 1 a step failed · 2 usage or configuration problem · 130 interrupted
+Exit codes: 0 ok · 1 a step failed · 2 usage or configuration problem · 129/130/143 interrupted (SIGHUP/SIGINT/SIGTERM)
 Docs: docs/cli.md
 `;
 
@@ -166,14 +166,19 @@ async function prepare(cwd, dir) {
   const tree = await discoverWorkflow(entry.root, { outputs: outputLocations(entry.config) });
   // Check author-written syntax before any executor (and any paid calls) runs.
   validateTemplate(entry.instructions, path.relative(cwd, entry.entryFile) || 'ENTRY.md');
+  const sources = new Map();
   for (const node of flatten(tree)) {
-    if (node.type === 'prompt') validateTemplate(await readFile(node.file, 'utf8'), node.relative);
+    if (node.type === 'prompt') {
+      const text = await readFile(node.file, 'utf8');
+      validateTemplate(text, node.relative);
+      sources.set(node.file, text);
+    }
     if (node.type === 'if') validateTemplate(node.config.test, `${node.relative}/FLOW.json (test)`);
     if (node.type === 'loop') validateTemplate(node.config.until, `${node.relative}/FLOW.json (until)`);
   }
-  await validateReferences(entry, tree);
+  const outputs = await validateReferences(entry, tree, sources);
   const promptIds = flatten(tree).filter(node => node.type === 'prompt').map(node => node.id);
-  return { entry, tree, promptIds };
+  return { entry, tree, promptIds, sources, outputs };
 }
 
 function prettyPlan(plan) {
@@ -225,7 +230,7 @@ async function checkCommand({ dir, flags }, cwd) {
   const lines = [`VALID ${path.relative(cwd, entry.entryFile) || 'ENTRY.md'} (${promptIds.length} prompt steps)`, prettyPlan(plan), ''];
   for (const item of used) {
     if (!item.display) lines.push(`Executor  ${item.name}: NOT CONFIGURED`);
-    else lines.push(`Executor  ${item.name}: ${item.display}   ${item.found ? `(${item.executable} found: ${item.found})` : `NOT READY — "${item.executable}" was not found on PATH`}`);
+    else lines.push(`Executor  ${item.name}: ${item.display}   ${item.found ? `(found: ${item.found})` : `NOT READY — "${item.executable}" was not found on PATH`}`);
   }
   if (used.some(item => !item.display)) {
     lines.push('', noExecutorError(entry.settings).message);
@@ -238,12 +243,12 @@ async function checkCommand({ dir, flags }, cwd) {
 }
 
 async function runCommand({ dir, step, flags }, cwd, options) {
-  const { entry, tree, promptIds } = await prepare(cwd, dir);
+  const { entry, tree, promptIds, sources, outputs } = await prepare(cwd, dir);
   const warnings = [...entry.settings.warnings];
   const target = step ? parseStepArg(step) : undefined;
 
   if (flags.dry) {
-    const rendered = await dryRun(entry, tree, { input: flags.input, step: target?.step });
+    const rendered = await dryRun(entry, tree, { input: flags.input, step: target?.step, sources, outputs });
     if (flags.json) return { output: JSON.stringify({ dry: true, steps: rendered }, null, 2), code: 0, warnings };
     const body = rendered.map(item => `──── ${item.id}  ${item.source} ────\n${item.prompt.trimEnd()}`).join('\n\n');
     const note = `DRY RUN — ${rendered.length} prompt${rendered.length === 1 ? '' : 's'} rendered; nothing was executed, no AI calls, no cache written.\nReferences to earlier steps appear as [output of 1.1]. Every IF branch is shown; a LOOP body once.`;
@@ -254,7 +259,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
   const state = await runWorkflow(entry, tree, {
     resolveExecutor: id => resolveExecutor(entry.settings, id, overrides),
     input: flags.input, signal: options.signal, hooks: options.hooks,
-    step: target?.step, iterations: target?.iterations,
+    step: target?.step, iterations: target?.iterations, sources, outputs,
     cache: flags.cache ? true : flags.noCache ? false : undefined,
     retry: flags.retry,
   });
@@ -284,24 +289,29 @@ function nextHint(state, promptIds, entry, overrides) {
     }
     return 'awe show   ·   awe show <step>';
   }
-  if (state.status === 'INTERRUPTED') return state.target ? 'run the same command again' : 'awe run --cache   (reuses the steps that already finished)';
+  // A command that was stopped, timed out or killed may have acted; awe will not resend it unless told to.
+  const retry = (state.invocations ?? []).filter(item => item.unknownOutcome).map(item => ` --retry ${displayAddress(item.address)}`).join('');
+  if (state.status === 'INTERRUPTED') return state.target ? `awe run ${state.target.address}${retry}` : `awe run --cache${retry}   (reuses the steps that already finished)`;
   const failed = state.error?.step;
   if (!failed) return null;
   const base = failed.split('@')[0];
   if (state.error.code === 'EXECUTOR_TIMEOUT') {
     const current = resolveExecutor(entry.settings, base, overrides).timeoutMs;
     const seconds = value => +(value / 1000).toFixed(1);
-    return `awe run ${failed} --timeout ${Math.ceil(seconds(current) * 2)}    (limit now ${seconds(current)}s)   ·   awe show ${failed} --err`;
+    return `awe run ${failed} --timeout ${Math.ceil(seconds(current) * 2)}${retry}    (limit now ${seconds(current)}s)   ·   awe show ${failed} --err`;
   }
   if (state.error.code === 'UNKNOWN_EFFECT') return null;
-  return `awe show ${failed} --err   ·   awe run ${failed}`;
+  return `awe show ${failed} --err   ·   awe run ${failed}${retry}`;
 }
 
 async function showCommand({ dir, step, flags }, cwd) {
   const found = await findWorkflowRoot(path.resolve(cwd, dir ?? '.'));
   const root = path.basename(found) === 'ENTRY.md' ? path.dirname(found) : found;
-  if (step) parseStepArg(step);
-  const result = await show(root, { step: step?.split('@')[0], runId: flags.runId, prompt: flags.prompt, err: flags.err, json: flags.json });
+  const target = step ? parseStepArg(step) : null;
+  const result = await show(root, {
+    step: target?.step, occurrence: target?.iterations ? `${target.step}@${target.iterations.join('.')}` : undefined,
+    runId: flags.runId, prompt: flags.prompt, err: flags.err, json: flags.json,
+  });
   return { ...result, warnings: [] };
 }
 

@@ -144,7 +144,7 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 | `awe show [DIR] [STEP]` | Latest run summary; a step's output (`--prompt`, `--err` for its prompt or stderr) |
 | `awe check [DIR]` | Validate the workflow, print the plan, check that executors exist |
 
-Exit codes: 0 ok, 1 a step failed, 2 usage/configuration problem, 130 interrupted. Upgrading from v0.1 (`simulate`, `dev`, `validate`, `plan`, `status`, `inspect`, `explain`, `--executor command --command`): see the [mapping](docs/cli.md#upgrading-from-v01).
+Exit codes: 0 ok, 1 a step failed, 2 usage/configuration problem, 129/130/143 interrupted. Upgrading from v0.1 (`simulate`, `dev`, `validate`, `plan`, `status`, `inspect`, `explain`, `--executor command --command`): see the [mapping](docs/cli.md#upgrading-from-v01).
 
 A compatible Skill wrapper is provided at `.agents/skills/awe/SKILL.md`.
 

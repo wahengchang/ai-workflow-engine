@@ -116,8 +116,8 @@ the command wrote to stderr, and suggests `awe run <step> --timeout <longer>`.
 | `--retry <step>` | run again a step whose outcome is unknown ([recovery](#interruptions-crashes-and-unknown-outcomes)) |
 | `--json` | print the run state as JSON |
 
-Exit codes: `0` finished, `1` a step failed, `2` awe could not start (usage, configuration, workflow files), `130`/`143`
-interrupted.
+Exit codes: `0` finished, `1` a step failed, `2` awe could not start (usage, configuration, workflow files),
+`129`/`130`/`143` interrupted by SIGHUP/SIGINT/SIGTERM.
 
 ### Cache
 
@@ -172,6 +172,7 @@ awe show                  the latest run: status, one line per step, stderr of a
 awe show 1.2              the output of step 1.2 (from whichever run last produced it)
 awe show 1.2 --prompt     the rendered prompt that was sent
 awe show 1.2 --err        the last lines the command wrote to stderr
+awe show 2.1.1@2          one LOOP iteration (same address form as `awe run`)
 awe show --run <id>       a specific run (default: the latest)
 awe show ... --json       the stored state
 ```
@@ -279,6 +280,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 - The cache identity trusts the command line as written; the behaviour of the program it launches is not versioned.
 - The lock uses process IDs, so it protects one machine only.
 - Mid-step output is not resumable: an interrupted step runs again from its start.
+- Nothing prunes `.awe/runs` or `.awe/cache`, and every run that executes steps writes new artifacts, prompts and saved files. Delete `.awe/` (or just `.awe/runs/<old runs>`) when it grows; the next run starts a fresh cache.
 - There is no built-in search or token budget. Put one in your prompt ("at most 5 searches") and give slow, tool-using
   steps a longer `timeout`.
 

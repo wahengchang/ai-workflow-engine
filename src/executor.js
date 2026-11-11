@@ -16,9 +16,15 @@ function redactArguments(message, argv) {
     const equals = arg.indexOf('=');
     return [arg, ...(equals >= 0 ? [arg.slice(equals + 1)] : [])];
   }).filter(Boolean).sort((a, b) => b.length - a.length);
-  // A single pass also avoids re-matching the replacement text itself.
-  const pattern = values.map(value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  return pattern ? message.replace(new RegExp(pattern, 'g'), '[REDACTED]') : message;
+  if (!values.length) return message;
+  // Literal matching, longest value first, one pass: no pattern-size limit (a rendered prompt can be
+  // tens of KB) and the replacement text is never re-matched.
+  let out = '';
+  for (let i = 0; i < message.length;) {
+    const hit = values.find(value => message.startsWith(value, i));
+    if (hit) { out += '[REDACTED]'; i += hit.length; } else out += message[i++];
+  }
+  return out;
 }
 
 export function tailLines(text, count = STDERR_TAIL_LINES) {
