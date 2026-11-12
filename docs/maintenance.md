@@ -52,7 +52,7 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 **Release is manual and not performed by this PR.** The repository currently has `license: UNLICENSED`; maintainer must explicitly decide and document licensing, npm scope ownership and public distribution rights before publishing.
 
 1. Resolve blocking correctness/safety issues from [#2](https://github.com/wahengchang/ai-workflow-engine/issues/2) and [#3](https://github.com/wahengchang/ai-workflow-engine/issues/3), especially false-success and secret-leak concerns.
-2. Verify the version in `package.json` and README; choose prerelease / release version and changelog.
+2. Verify the version in `package.json` (it is what `awe --version` prints) and choose prerelease / release version and changelog.
 3. Pass CI and run `npm pack --dry-run`; inspect the exact tarball manifest and packed content.
 4. Validate a real isolated-machine install from GitHub (pinned SHA) on macOS/Linux and one additional platform as applicable.
 5. On a suitable Node version, run `npx skills add wahengchang/ai-workflow-engine --list` and project/global installs for Codex and one other agent. Check Skill loads and `awe --help` fails helpfully when CLI is missing.

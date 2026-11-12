@@ -12,7 +12,7 @@
 
 | Route | Use case | Current status |
 | --- | --- | --- |
-| Clone + `npm link` | Local development and testing | Documented v0.1 path |
+| Clone + `npm link` | Local development and testing | The supported development path |
 | `npm install -g github:wahengchang/ai-workflow-engine` | Install CLI from GitHub source | npm-supported mechanism; clean-machine verification pending |
 | `npm install -g @wahengchang/ai-workflow-engine` | Published registry CLI | **Future target; publication not confirmed** |
 | `npx skills add wahengchang/ai-workflow-engine --skill awe` | Optional Agent Skill | Instructions only; verify remote discovery/install |
@@ -142,6 +142,7 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 | `awe run [DIR] [STEP]` | Run the workflow, or one step (earlier steps come from the cache). Flags: `--var`, `--cache`/`--no-cache`, `--dry`, `--executor`, `--timeout`, `--retry`, `--json` |
 | `awe show [DIR] [STEP]` | Latest run summary; a step's output (`--prompt`, `--err` for its prompt or stderr) |
 | `awe check [DIR]` | Validate the workflow, print the plan, check that executors exist |
+| `awe --version` | Print the CLI version (the `"version": 2` in `awe.json` is the workflow schema version) |
 
 Exit codes: 0 ok, 1 a step failed, 2 usage/configuration problem, 129/130/143 interrupted. Upgrading from v0.1 (`simulate`, `dev`, `validate`, `plan`, `status`, `inspect`, `explain`, `--executor command --command`): see the [mapping](docs/cli.md#upgrading-from-v01).
 
@@ -155,4 +156,4 @@ npm run check
 npm run test:distribution
 ```
 
-See the [CLI guide](docs/cli.md), [architecture](docs/architecture.md) and [implementation plan](docs/plan.md). Key limitations: no automatic crash-time `resume` (an interrupted command is retried explicitly with `--retry`, never exactly-once), no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.
+See the [CLI guide](docs/cli.md), [architecture](docs/architecture.md) and [implementation plan](docs/plan.md). Key limitations: no automatic crash-time `resume` (an interrupted command is retried explicitly with `--retry`, never exactly-once), no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality.
