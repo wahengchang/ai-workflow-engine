@@ -12,7 +12,24 @@ awe check [dir]                 validate, list the steps, check the executor
 `dir` is a workflow folder. Leave it out and awe uses the current folder, or the nearest parent that contains
 `awe.json`, so every command also works from a sub-folder. `step` is a step address: `1.2`, `3.1.2`, or `2.1.1@2`
 (see [LOOPs](#loops-and-parallel-groups)). A word that looks like `1.2` is always a step, never a folder; write `./1.2`
-for a folder with that name.
+for a folder with that name. `awe --version` prints the CLI version; the `"version": 2` inside `--json` payloads is the
+workflow **schema** version, not the CLI's.
+
+## Common tasks
+
+| I want to… | Command |
+| --- | --- |
+| run the whole workflow | `awe run` |
+| see the prompts before spending anything | `awe run --dry` (or `awe run --dry 1.2` for one step) |
+| pass a value for one run | `awe run --var topic="…"` (repeatable; `input` in `awe.json` is the default) |
+| run one step and reuse everything before it | `awe run 1.2` |
+| re-run only the last step after editing it | `awe run 1.3` — 1.1 and 1.2 stay `cached` |
+| use a different command for one step | `awe.json`: `"executors": { "x": { "run": "…" } }` plus `"steps": { "1.2": { "executor": "x" } }` |
+| find out why a step re-ran | the reason in brackets on its line (`(its prompt file changed)`), or `invocations[].reason` with `--json` |
+| see which CLI version is installed | `awe --version` |
+
+Two habits keep the cost predictable: **name the step** you are working on (naming a step turns the cache on), and
+keep `awe.json` inputs stable while iterating — a changed input is a different cache, so every step runs again.
 
 ## Build a workflow one step at a time
 
@@ -148,9 +165,9 @@ A stored result is reused only if all of this still holds:
 | rerun a step (`awe run 1.2`) | everything that could see its result is stale, **even if the new output is identical** |
 | a stored file or artifact | `CACHE_INVALID` is recorded; that step and its dependents run again |
 
-A step that runs although a cache is in use says why, in brackets: `(not cached yet)`, `(the common text changed)`, `(its prompt file
-changed)`, `(an earlier step ran again)`, `(its command changed)`, `(its previous attempt failed)`. A step you named, or a run
-with `--no-cache`, needs no reason.
+A step that runs although a cache is in use says why, in brackets — for example `(not cached yet)`, `(the common text
+changed)`, `(its prompt file changed)`, `(its command changed)`, `(an earlier step ran again)`. `--json` carries the same
+text in `invocations[].reason`. A step you named, or a run with `--no-cache`, needs no reason.
 
 If a rerun fails, awe does not quietly fall back to the older success: later steps cannot be reused until that step
 succeeds again. Old attempts stay on disk (`awe show`).
@@ -262,8 +279,10 @@ A folder inside the workflow is part of it only if it is a numbered or `stage-N`
 prompt somewhere below. Any other folder (`out/`, `state/`, a `notes/` folder of plain Markdown that a step created) is
 ignored, so scratch space written by a command never turns a working workflow into one that cannot be checked or run. A
 folder that does hold numbered prompts but is not itself numbered fails with `INVALID_STEP` and says how to rename it. Plain
-files are different: a non-numbered `.md` file in a workflow folder is still an error, so declare files a step writes
-there under `steps.<id>.outputs`, or write them into a dot-folder such as `.state/`.
+files are different: a `.md` name without a number pair is `INVALID_STEP` too, so declare files a step writes
+there under `steps.<id>.outputs`, or write them into a dot-folder such as `.state/`. A name that does not end in
+`.md` at all — a stray leading or trailing space is the usual cause — is not a step file: if it is the only file, the
+run stops with `EMPTY_WORKFLOW` and names it; next to valid steps it is skipped without a message.
 
 ## Output files
 
@@ -365,6 +384,15 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `WORKFLOW_NOT_FOUND` | not inside a workflow; use `awe init <dir>`, `cd` into one, or pass the folder |
 | `STEP_NOT_FOUND` | no such step, or the address names a group (lists the valid steps) |
 | `ITERATION_REQUIRED` / `ITERATION_INVALID` | `step@n` is ambiguous, malformed or out of range |
+| `MISSING_REFERENCE` | a template asks for a value that does not exist: usually `{{ input.x }}` with no `x` in `awe.json`. The message names the file and the missing value (`Missing template value: input.topic`) but not the cause — check the key's spelling, `input` not `inputs` |
+| `INVALID_TEMPLATE` | an unclosed or unsupported `{{ … }}` expression; the message names the file and line |
+| `EMPTY_WORKFLOW` | no step file in this folder. A step must end in `.md` and start with a number pair (`1.1-…`); file names with a leading or trailing space are named in the message |
+| `DUPLICATE_STEP`, `INVALID_STEP` | two files or folders claim the same step number; a prompt or folder name does not start with a number pair (`1.1-…`) |
+| `INVALID_FLOW`, `INVALID_ENTRY` | `FLOW.json` is malformed or incomplete (missing `then`/`else`, bad `maxIterations`); the path passed is not a workflow folder |
+| `PARALLEL_COLLISION` | two branches of a `parallel` group wrote the same step id |
+| `IF_NO_MATCH`, `LOOP_EXHAUSTED` | the IF gate matched neither `equals` nor `elseEquals`; the LOOP gate still did not match after `maxIterations` |
+| `INVALID_EXECUTOR`, `INVALID_RESULT`, `INIT_EXISTS` | a command specification is malformed, a command returned something that is not text, or `awe init` refused an existing destination |
+| `RUN_INTERRUPTED`, `RUN_ABANDONED`, `ORPHANED_INTENT`, `CACHE_INVALID` | a signal stopped the run (exit 129/130/143), a crash left it unfinished, an attempt's outcome is unknown, or a stored result failed its integrity check — all covered under [recovery](#interruptions-crashes-and-unknown-outcomes) |
 | `TARGET_UNREACHABLE` | the gate or loop never reaches that step; it was not executed |
 | `UNKNOWN_EFFECT` / `RETRY_UNKNOWN` | see [recovery](#interruptions-crashes-and-unknown-outcomes) |
 | `CACHE_BUSY` | another `awe run` is using this workflow's cache |

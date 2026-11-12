@@ -1,6 +1,6 @@
 {
   "name": "@wahengchang/ai-workflow-engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Filesystem-first AI workflow interpreter with a CLI named awe",
   "type": "module",
   "bin": {

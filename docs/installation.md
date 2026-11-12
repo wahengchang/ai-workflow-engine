@@ -1,6 +1,6 @@
 # Install AWE: CLI Engine + optional Agent Skill
 
-**Status:** AWE is currently a v0.1 foundation, not a published production release. This document separates **verified source behavior**, **candidate install routes**, and **future publishing commands**. A workflow using the default `echo` executor does **not** invoke an LLM.
+**Status:** v0.2 CLI, not yet a published production release. There is **no built-in executor**: a workflow without a command in `awe.json` stops and shows examples, and `awe run --dry` previews the prompts without calling anything. This document separates **verified source behavior**, **candidate install routes**, and **future publishing commands**.
 
 ## Which installation do I need?
 

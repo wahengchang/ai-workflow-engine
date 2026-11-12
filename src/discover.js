@@ -147,7 +147,16 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
     return { type: flow.type, relative, config: flow, children };
   }
   const tree = await scan(rootReal, '');
-  assertAwe(tree.children.length > 0, 'EMPTY_WORKFLOW', 'No numbered steps found in this workflow folder');
+  if (!tree.children.length) {
+    // A file name that does not end in `.md` never reaches the step parser, and a stray leading or
+    // trailing space is the usual cause, so name it here instead of reporting an empty folder.
+    const names = await readdir(rootReal).catch(() => []);
+    const padded = names.filter(name => name !== name.trim() && name.trim().endsWith('.md'));
+    const hint = padded.length
+      ? ` These names start or end with a space, so they are not step files: ${padded.map(name => JSON.stringify(name)).join(', ')}. Rename them without the spaces.`
+      : '';
+    throw new AweError('EMPTY_WORKFLOW', `No numbered steps found in this workflow folder. A step file must end in .md and start with a number pair such as 1.1- or 2.1.1-.${hint}`);
+  }
   // Only the awe.json at the workflow root is used. Report the others instead of ignoring them silently.
   tree.ignoredEntries = ignoredEntries;
   return tree;

@@ -457,3 +457,16 @@ test('a result written by an older awe is rerun with an honest reason', async t 
   await writeFile(file, JSON.stringify(data));
   assert.match((await cli(['run', ws.dir, '1.2'], ws.dir)).output, /^ {2}1\.1 +ran +\S+ +\(written by an older awe\)/m);
 });
+
+test('--version names the installed CLI, and an empty folder says why it is empty', async t => {
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal((await cli(['--version'], process.cwd())).output, `awe ${pkg.version}`);
+  assert.equal((await cli(['-v'], process.cwd())).output, `awe ${pkg.version}`);
+
+  const empty = await workspace(t, {});
+  await assert.rejects(cli(['check', empty.dir], empty.dir), { code: 'EMPTY_WORKFLOW', message: /must end in \.md and start with a number pair/ });
+
+  // A name that does not end in `.md` never reaches the step parser; a stray space is the usual cause.
+  const padded = await workspace(t, { ' 1.1-padded.md ': 'x' });
+  await assert.rejects(cli(['check', padded.dir], padded.dir), { code: 'EMPTY_WORKFLOW', message: /start or end with a space.*" 1\.1-padded\.md "/ });
+});
