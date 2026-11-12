@@ -12,7 +12,24 @@ awe check [dir]                 validate, list the steps, check the executor
 `dir` is a workflow folder. Leave it out and awe uses the current folder, or the nearest parent that contains
 `awe.json`, so every command also works from a sub-folder. `step` is a step address: `1.2`, `3.1.2`, or `2.1.1@2`
 (see [LOOPs](#loops-and-parallel-groups)). A word that looks like `1.2` is always a step, never a folder; write `./1.2`
-for a folder with that name.
+for a folder with that name. `awe --version` prints the CLI version; the `"version": 2` inside `--json` payloads is the
+workflow **schema** version, not the CLI's.
+
+## Common tasks
+
+| I want to… | Command |
+| --- | --- |
+| run the whole workflow | `awe run` |
+| see the prompts before spending anything | `awe run --dry` (or `awe run --dry 1.2` for one step) |
+| pass a value for one run | `awe run --var topic="…"` (repeatable; `input` in `awe.json` is the default) |
+| run one step and reuse everything before it | `awe run 1.2` |
+| re-run only the last step after editing it | `awe run 1.3` — 1.1 and 1.2 stay `cached` |
+| use a different command for one step | `awe.json`: `"executors": { "x": { "run": "…" } }` plus `"steps": { "1.2": { "executor": "x" } }` |
+| find out why a step re-ran | the reason in brackets on its line (`(its prompt file changed)`), or `invocations[].reason` with `--json` |
+| see which CLI version is installed | `awe --version` |
+
+Two habits keep the cost predictable: **name the step** you are working on (naming a step turns the cache on), and
+keep `awe.json` inputs stable while iterating — a changed input is a different cache, so every step runs again.
 
 ## Build a workflow one step at a time
 
@@ -365,6 +382,10 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `WORKFLOW_NOT_FOUND` | not inside a workflow; use `awe init <dir>`, `cd` into one, or pass the folder |
 | `STEP_NOT_FOUND` | no such step, or the address names a group (lists the valid steps) |
 | `ITERATION_REQUIRED` / `ITERATION_INVALID` | `step@n` is ambiguous, malformed or out of range |
+| `MISSING_REFERENCE` | a template asks for a value that does not exist: usually `{{ input.x }}` with no `x` in `awe.json`. The message names the file and the missing value (`Missing template value: input.topic`) but not the cause — check the key's spelling, `input` not `inputs` |
+| `INVALID_TEMPLATE` | an unclosed or unsupported `{{ … }}` expression; the message names the file and line |
+| `EMPTY_WORKFLOW` | no step file in this folder. A step must end in `.md` and start with a number pair (`1.1-…`); file names with a leading or trailing space are named in the message |
+| `DUPLICATE_STEP`, `INVALID_FLOW`, `INVALID_ENTRY` | two files or folders claim the same step number; `FLOW.json` is malformed; the path passed is not a workflow folder |
 | `TARGET_UNREACHABLE` | the gate or loop never reaches that step; it was not executed |
 | `UNKNOWN_EFFECT` / `RETRY_UNKNOWN` | see [recovery](#interruptions-crashes-and-unknown-outcomes) |
 | `CACHE_BUSY` | another `awe run` is using this workflow's cache |

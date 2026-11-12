@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { loadEntry, findWorkflowRoot } from './entry.js';
 import { discoverWorkflow, flatten, outputLocations } from './discover.js';
 import { getPlan } from './runtime.js';
@@ -45,8 +46,12 @@ Configure the AI command in awe.json:  "run": "claude -p {prompt}"
   {prompt_file} the path of the saved prompt file    (no placeholder: sent on stdin)
 
 Exit codes: 0 ok · 1 a step failed · 2 usage or configuration problem · 129/130/143 interrupted (SIGHUP/SIGINT/SIGTERM)
-Docs: docs/cli.md
+Version: awe --version          Docs: docs/cli.md
 `;
+
+// The CLI reads package.json at startup (one small file) so `awe --version` and `awe --help` can never
+// disagree with the package that was installed.
+export const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 const COMMAND_HELP = {
   init: 'Usage: awe init <dir>\nCreates a six-step content workflow in a new folder and writes the first AI CLI found on PATH (claude, codex, opencode, omp) into awe.json as "run". Refuses existing folders.',
@@ -82,6 +87,7 @@ function usage(message, extra = {}) {
 export function parseArgs(argv) {
   const [command = 'help', ...rest] = argv;
   if (['help', '--help', '-h'].includes(command)) return { command: 'help', flags: {}, topic: rest[0] };
+  if (['--version', '-v'].includes(command)) return { command: 'version', flags: {} };
   if (REMOVED[command]) throw usage(REMOVED[command]);
   if (!FLAGS[command]) throw usage(`Unknown command "${command}". Commands: init, run, show, check   (see: awe --help)`);
   const spec = FLAGS[command];
@@ -338,6 +344,7 @@ export async function cli(argv, cwd = process.cwd(), options = {}) {
   if (parsed.command === 'help') {
     return { output: COMMAND_HELP[parsed.topic] ?? HELP, code: 0, warnings: [] };
   }
+  if (parsed.command === 'version') return { output: `awe ${VERSION}`, code: 0, warnings: [] };
   if (parsed.command === 'init') return initCommand(parsed, cwd, options);
   if (parsed.command === 'check') return checkCommand(parsed, cwd);
   if (parsed.command === 'show') return showCommand(parsed, cwd);

@@ -54,7 +54,7 @@ Everything about the commands, the cache rules, per-step executors, output files
 
 ```text
 my-content-workflow/
-├── awe.json                   # marks the workflow root: inputs, executor, shared "common" text
+├── awe.json                   # marks the workflow root: input, executor, shared "common" text
 ├── stage-1-research/
 │   ├── 1.1-topic-research.md   # default: sequential in numeric order
 │   └── 1.2-outline.md
