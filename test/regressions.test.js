@@ -9,23 +9,25 @@ import { fileURLToPath } from 'node:url';
 import { cli, parseArgs } from '../src/cli.js';
 import { loadEntry } from '../src/entry.js';
 import { discoverWorkflow } from '../src/discover.js';
-import { startRun } from '../src/runtime.js';
+import { runWorkflow } from '../src/engine.js';
 import { renderTemplate } from '../src/template.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const agent = path.join(root, 'fixtures/fake-agent.cjs');
-const command = { type: 'command', argv: [process.execPath, agent], timeoutMs: 5000 };
+const command = { name: 'run', argv: [process.execPath, agent], display: 'fake agent', timeoutMs: 5000 };
+const quote = JSON.stringify;
 async function fixture(t, files, config = {}) {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'awe-regression-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  for (const [name, text] of Object.entries({ 'ENTRY.md': '# Instructions', 'awe.json': JSON.stringify(config), ...files })) {
+  for (const [name, text] of Object.entries({ 'awe.json': JSON.stringify({ common: '# Instructions', ...config }), ...files })) {
     await mkdir(path.dirname(path.join(dir, name)), { recursive: true });
     await writeFile(path.join(dir, name), text);
   }
   return dir;
 }
 async function run(dir, options = {}) {
-  return startRun(await loadEntry(dir), await discoverWorkflow(dir), { executor: command, ...options });
+  const { executor = command, ...rest } = options;
+  return runWorkflow(await loadEntry(dir), await discoverWorkflow(dir), { resolveExecutor: () => executor, ...rest });
 }
 const flow = JSON.stringify;
 
@@ -68,7 +70,7 @@ test('join still rejects genuine duplicate branch writes', async t => {
   // Discovery normally rejects duplicates; exercise the runtime guard directly.
   tree.type = 'parallel';
   tree.children[1].id = tree.children[0].id;
-  const result = await startRun(await loadEntry(dir), tree, { executor: command });
+  const result = await runWorkflow(await loadEntry(dir), tree, { resolveExecutor: () => command });
   assert.equal(result.error.code, 'PARALLEL_COLLISION');
 });
 
@@ -85,35 +87,35 @@ test('template data is never reinterpreted and escaped literals render once', ()
   }
 });
 
-test('command inference, multiline --var, and braces round-trip through CLI and ENTRY', async t => {
+test('the command string, multiline --var, and braces round-trip through CLI and the common text', async t => {
   const dir = await fixture(t, {
-    'ENTRY.md': 'Audience: {{ input.mail }}; literal \\{{ audience }}',
     '1.1-copy.md': '{{ input.mail }}',
     '1.2-consume.md': '{{ steps["1.1"].output }}',
-  }, { executor: { type: 'echo' } });
+  }, { version: 2, common: 'Audience: {{ input.mail }}; literal \\{{ audience }}', run: `${quote(process.execPath)} -e "process.stdin.pipe(process.stdout)"` });
   const value = 'Hi {{first_name}}\n${{ secrets.X }}\r\n你好';
-  const result = await cli(['run', dir, '--command', process.execPath, '--arg', '-e', '--arg', 'process.stdin.pipe(process.stdout)', '--var', `mail=${value}`]);
+  const result = await cli(['run', dir, '--var', `mail=${value}`, '--json']);
   assert.equal(result.code, 0, result.output);
-  const runId = /Run: (\S+)/.exec(result.output)[1];
-  const state = JSON.parse((await cli(['inspect', runId], dir)).output);
-  assert.equal(state.executor.type, 'command');
+  const state = JSON.parse(result.output);
   const output = await readFile(state.steps['1.2'].artifact, 'utf8');
   assert.ok(output.includes(value));
   assert.ok(output.includes('literal {{ audience }}'));
   assert.ok(!output.includes('{{ input.mail }}'));
   assert.equal(parseArgs(['run', dir, '--var', 'mail=']).flags.input.mail, '');
-  await assert.rejects(cli(['run', dir, '--executor', 'echo', '--command', 'node']), { code: 'CLI_USAGE' });
-  await assert.rejects(cli(['run', dir, '--arg', '-p']), { code: 'CLI_USAGE' });
+  assert.equal(parseArgs(['run', dir, '--var=mail=x']).flags.input.mail, 'x');
+  for (const args of [['--command', 'node'], ['--arg', '-p'], ['--executor', 'command', '--command', 'node']]) {
+    await assert.rejects(cli(['run', dir, ...args]), { code: 'CLI_USAGE' }, args.join(' '));
+  }
+  await assert.rejects(cli(['run', dir, '--executor', 'echo']), { code: 'UNKNOWN_EXECUTOR', message: /Available: run/ });
 });
 
-test('validate rejects invalid source syntax in ENTRY, prompts, and control expressions', async t => {
-  for (const files of [
-    { 'ENTRY.md': '{{ audience }}', '1.1-a.md': 'a' },
-    { '1.1-a.md': 'a', '1.2-b.md': '{{ input.broken' },
-    { '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }), '1.1-loop/1.1.1-a.md': 'a' },
+test('check and run reject invalid source syntax in the common text, prompts, and control expressions', async t => {
+  for (const [files, config] of [
+    [{ '1.1-a.md': 'a' }, { common: '{{ audience }}' }],
+    [{ '1.1-a.md': 'a', '1.2-b.md': '{{ input.broken' }, {}],
+    [{ '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }), '1.1-loop/1.1.1-a.md': 'a' }, {}],
   ]) {
-    const dir = await fixture(t, files);
-    await assert.rejects(cli(['validate', dir]), { code: 'INVALID_TEMPLATE' });
+    const dir = await fixture(t, files, config);
+    await assert.rejects(cli(['check', dir]), { code: 'INVALID_TEMPLATE' });
     await assert.rejects(cli(['run', dir]), { code: 'INVALID_TEMPLATE' });
     await assert.rejects(readdir(path.join(dir, '.awe')), { code: 'ENOENT' });
   }
@@ -121,35 +123,38 @@ test('validate rejects invalid source syntax in ENTRY, prompts, and control expr
 
 test('template errors name the file or step and line', async t => {
   const dir = await fixture(t, { '1.1-a.md': 'fine', '1.2-b.md': 'line one\nUse ${{ secrets.X }} here' });
-  await assert.rejects(cli(['validate', dir]), { code: 'INVALID_TEMPLATE', message: /1\.2-b\.md: .*line 2/ });
-  const entryDir = await fixture(t, { 'ENTRY.md': '# x\n{{ name }}', '1.1-a.md': 'a' });
-  await assert.rejects(cli(['validate', entryDir]), { code: 'INVALID_TEMPLATE', message: /ENTRY\.md: .*line 2/ });
+  await assert.rejects(cli(['check', dir]), { code: 'INVALID_TEMPLATE', message: /1\.2-b\.md: .*line 2/ });
+  const entryDir = await fixture(t, { '1.1-a.md': 'a' }, { common: '# x\n{{ name }}' });
+  await assert.rejects(cli(['check', entryDir]), { code: 'INVALID_TEMPLATE', message: /"common" in awe\.json: .*line 2/ });
   const flowDir = await fixture(t, {
     '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }),
     '1.1-loop/1.1.1-a.md': 'a',
   });
-  await assert.rejects(cli(['validate', flowDir]), { code: 'INVALID_TEMPLATE', message: /1\.1-loop\/FLOW\.json \(until\)/ });
+  await assert.rejects(cli(['check', flowDir]), { code: 'INVALID_TEMPLATE', message: /1\.1-loop\/FLOW\.json \(until\)/ });
   const missing = await fixture(t, { '1.1-a.md': '{{ input.nope }}' });
   const result = await run(missing);
   assert.equal(result.error.code, 'MISSING_REFERENCE');
   assert.match(result.error.message, /1\.1-a\.md: Missing template value: input\.nope/);
 });
 
-test('executor argument values are omitted from state and prompts are opt-in', async t => {
-  const dir = await fixture(t, { '1.1-a.md': 'OUTPUT::ok' });
-  const result = await cli(['run', dir, '--command', process.execPath, '--arg', agent, '--arg', '--api-key=sk-test-SECRET', '--arg', '--token', '--arg', 'OTHER_SECRET']);
+test('executor argument values are omitted from state; prompts are kept as files unless storePrompts is false', async t => {
+  const dir = await fixture(t, { '1.1-a.md': 'OUTPUT::ok' }, { version: 2, run: `${quote(process.execPath)} ${quote(agent)} "--api-key=sk-test-SECRET" --token OTHER_SECRET` });
+  const result = await cli(['run', dir, '--json']);
   assert.equal(result.code, 0);
-  const runId = /Run: (\S+)/.exec(result.output)[1];
-  const state = (await cli(['inspect', runId], dir)).output;
-  assert.ok(!state.includes('SECRET'));
-  assert.ok(!state.includes('argv'));
-  const artifacts = await readdir(path.join(dir, '.awe/runs', runId, 'artifacts'));
-  assert.equal(artifacts.length, 1);
-  const stored = await fixture(t, { '1.1-a.md': 'OUTPUT::ok' }, { storePrompts: true });
-  const runState = await run(stored);
-  const prompt = await readFile(runState.steps['1.1'].prompt, 'utf8');
-  assert.match(prompt, /# Workflow instructions \(ENTRY.md\)\n# Instructions/);
+  const state = JSON.parse(result.output);
+  const text = JSON.stringify(state) + (await cli(['show', dir, '--json'])).output;
+  assert.ok(!text.includes('SECRET'));
+  assert.ok(!text.includes('argv'));
+  assert.deepEqual((await readdir(path.join(dir, '.awe/runs', state.runId, 'artifacts'))).sort(), ['1-1-attempt-1.md', 'prompt-1-1-attempt-1.md']);
+  const prompt = await readFile(state.steps['1.1'].prompt, 'utf8');
+  assert.match(prompt, /^# Common instructions\n# Instructions\n\n# Step 1\.1 /);
   assert.match(prompt, /OUTPUT::ok/);
+  assert.equal((await cli(['show', dir, '1.1', '--prompt'])).output, prompt.trimEnd());
+
+  const quiet = await fixture(t, { '1.1-a.md': 'OUTPUT::ok' }, { version: 2, run: `${quote(process.execPath)} ${quote(agent)}`, storePrompts: false });
+  const quietState = JSON.parse((await cli(['run', quiet, '--json'])).output);
+  assert.deepEqual(await readdir(path.join(quiet, '.awe/runs', quietState.runId, 'artifacts')), ['1-1-attempt-1.md']);
+  await assert.rejects(cli(['show', quiet, '1.1', '--prompt']), { code: 'PROMPT_NOT_STORED' });
 });
 
 test('gate normalization is opt-in and strict IF rejects unexpected tokens', async t => {
@@ -205,7 +210,8 @@ for (const signal of Object.keys(exitCodes)) {
       '1.1-parallel/FLOW.json': flow({ type: 'parallel' }),
       '1.1-parallel/1.1.1-a.md': 'wait',
       '1.1-parallel/1.1.2-b.md': 'wait',
-    }, { executor: { type: 'command', argv: [process.execPath, '-e', wrapper], timeoutMs: 5000 } });
+      'wrapper.cjs': wrapper,
+    }, { version: 2, run: `${quote(process.execPath)} wrapper.cjs`, timeout: 5 });
     const child = spawn(process.execPath, [path.join(root, 'bin/awe.js'), 'run', dir], { stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => { if (child.exitCode === null) child.kill('SIGKILL'); });
     let stdout = '';
@@ -219,7 +225,7 @@ for (const signal of Object.keys(exitCodes)) {
     });
     child.kill(signal);
     assert.equal(await closed, exitCodes[signal]);
-    assert.match(stdout, /Status: INTERRUPTED/);
+    assert.match(stdout, /INTERRUPTED/);
     const [id] = await readdir(path.join(dir, '.awe/runs'));
     const state = JSON.parse(await readFile(path.join(dir, '.awe/runs', id, 'state.json'), 'utf8'));
     assert.equal(state.status, 'INTERRUPTED');
@@ -232,17 +238,24 @@ for (const signal of Object.keys(exitCodes)) {
 
 test('timeout kills a wrapper and its grandchild', { skip: process.platform === 'win32', timeout: 10000 }, async t => {
   const dir = await fixture(t, { '1.1-a.md': 'wait' });
-  const result = await run(dir, { executor: { type: 'command', argv: [process.execPath, '-e', wrapper], timeoutMs: 1200 } });
+  const result = await run(dir, { executor: { name: 'run', argv: [process.execPath, '-e', wrapper], timeoutMs: 1200 } });
   assert.equal(result.error.code, 'EXECUTOR_TIMEOUT');
   assert.equal(await exists(path.join(dir, 'ready')), true, 'grandchild must have started before timeout');
   await assertHeartbeatStopped(dir);
 });
 
-test('missing CLI option values cannot silently select echo', () => {
-  for (const flag of ['--command', '--arg', '--executor', '--var', '--step']) {
+test('flags that need a value never swallow the next flag or run with a missing value', () => {
+  for (const flag of ['--executor', '--var', '--timeout', '--retry']) {
     assert.throws(() => parseArgs(['run', '.', flag]), { code: 'CLI_USAGE' });
+    assert.throws(() => parseArgs(['run', '.', flag, '--json']), { code: 'CLI_USAGE', message: new RegExp(`${flag} needs a value`) });
   }
-  assert.throws(() => parseArgs(['run', '.', '--command', '']), { code: 'CLI_USAGE' });
+  assert.throws(() => parseArgs(['run', '.', '--executor', '--cache']), { code: 'CLI_USAGE' });
+  assert.throws(() => parseArgs(['run', '.', '--timeout', 'soon']), { code: 'CLI_USAGE', message: /positive number/ });
+  assert.throws(() => parseArgs(['run', '.', '--bogus']), { code: 'CLI_USAGE', message: /Unknown flag --bogus for awe run\. Flags: /});
+  assert.throws(() => parseArgs(['init']), { code: 'CLI_USAGE' });
+  assert.throws(() => parseArgs(['simulate', '.']), { code: 'CLI_USAGE', message: /replaced by: awe run --dry/ });
+  assert.deepEqual(parseArgs(['run', 'wf', '2.1.1@2.1', '--timeout', '600', '--no-cache']).step, '2.1.1@2.1');
+  assert.equal(parseArgs(['run', '1.2']).dir, undefined, 'a step address is not a folder');
 });
 
 test('invalid gate settings are rejected during discovery', async t => {
@@ -252,7 +265,7 @@ test('invalid gate settings are rejected during discovery', async t => {
       '1.1-if/yes/1.1.1-a.md': 'a',
       '1.1-if/no/1.1.2-b.md': 'b',
     });
-    await assert.rejects(cli(['validate', dir]), { code: 'INVALID_FLOW' });
+    await assert.rejects(cli(['check', dir]), { code: 'INVALID_FLOW' });
   }
 });
 

@@ -28,8 +28,7 @@ npm run test:distribution
 npm link
 
 awe --help
-awe validate examples/content-generation/ENTRY.md
-awe plan examples/content-generation/ENTRY.md
+awe check examples/content-generation
 ```
 
 `npm install` in the repository does **not** create the global `awe` command on its own; `npm link` links that checkout into your PATH. To unlink later, run `npm unlink -g @wahengchang/ai-workflow-engine` (or `npm uninstall -g @wahengchang/ai-workflow-engine` as appropriate).
@@ -94,13 +93,13 @@ Use a **pinned Git ref** when reproducibility matters, for example `wahengchang/
 ## 5. First workflow test (safe; no paid AI calls)
 
 ```sh
-awe init --template content --out my-workflow
-awe validate my-workflow/ENTRY.md
-awe plan my-workflow/ENTRY.md
-awe simulate my-workflow/ENTRY.md --var topic="Choosing coffee beans"
+awe init my-workflow
+cd my-workflow
+awe check
+awe run --dry
 ```
 
-The default executor is `echo`; the run's `COMPLETED` status means **the wiring ran**, **not** that AI generated an article. To run real AI, explicitly configure an approved command executor in `awe.json` or on the CLI, such as `--executor command --command <agent-binary> --arg <arg>`. See [README](../README.md) for the stdin/stdout contract and warnings about costs and permissions.
+`awe check` validates the workflow and tells you whether an AI command is configured. `awe run --dry` prints the rendered prompts and calls nothing. To run real AI, put an approved command in `awe.json`, for example `"run": "claude -p {prompt}"` (`awe init` writes the first of `claude`, `codex`, `opencode`, `omp` it finds on PATH), then `awe run 1.1`. See [the CLI guide](cli.md) for the cache, per-step executors and the stdin/stdout contract, and the warnings about costs and permissions.
 
 ## 6. Upgrade and uninstall
 
@@ -120,10 +119,10 @@ If an old global `awe` shadows a local install, inspect `command -v awe` on macO
 | `awe: command not found` | Install/link the CLI; verify PATH, Node/npm location |
 | `npx skills` does not start | Check its current Node requirement; this is **not** an AWE runtime failure |
 | Skill installed but `awe` absent | Expected: Skill only installs instructions; install CLI separately |
-| `COMPLETED` but output contains prompts | Default `echo` executor; configure a real AI CLI |
+| `awe run` says `No executor configured` | Add `"run": "<ai command> {prompt}"` to `awe.json`; preview with `awe run --dry` |
 | Agent command not found / authentication error | Install/authenticate that external agent and verify it reads stdin |
 | `npm pack` includes unexpected files | Run `npm run test:distribution`; review `package.json#files` before release |
-| Canceled/failed run | Inspect `.awe/runs/<id>/state.json`; v0.1 cannot resume automatically |
+| Canceled/failed run | `awe show` (add `--err` for stderr); `awe run --cache` finishes what is still valid; an interrupted command needs `--retry <step>` |
 
 Only run trusted workflows and external commands: AWE does **not** sandbox an agent and the command executor inherits your operating-system permissions. Keep `.awe/runs` private because artifacts and inputs may contain sensitive content. Do not put API keys in command-line arguments.
 
@@ -138,4 +137,4 @@ See [maintenance and release policy](maintenance.md) for ongoing CI, versioning,
 
 ## Automated installation coverage
 
-`npm run test:distribution` uses temporary npm prefixes and a temporary cache. It packs the allowlisted files, installs the tarball locally and globally, creates a source link, and invokes the CLI from an unrelated working directory. It checks npm bin resolution with `npm exec`, plus explicit one-off execution from the local tarball. Help, validation and planning must work for each route. Cleanup removes the test prefixes and cache; the configured global installation is unchanged. These are isolated-prefix tests on the current machine, not clean-machine remote installation or interactive agent activation tests. No registry publication, GitHub release, model calls or network dependency downloads are involved.
+`npm run test:distribution` uses temporary npm prefixes and a temporary cache. It packs the allowlisted files, installs the tarball locally and globally, creates a source link, and invokes the CLI from an unrelated working directory. It checks npm bin resolution with `npm exec`, plus explicit one-off execution from the local tarball. Help and `awe check` must work for each route. Cleanup removes the test prefixes and cache; the configured global installation is unchanged. These are isolated-prefix tests on the current machine, not clean-machine remote installation or interactive agent activation tests. No registry publication, GitHub release, model calls or network dependency downloads are involved.

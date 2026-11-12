@@ -1,8 +1,10 @@
 # AWE — AI Workflow Engine
 
-**Filesystem-first, prompt-first AI workflow interpreter.** Create an `ENTRY.md`, put numbered Markdown prompts in folders, and run them via a CLI named **`awe`**. Designed for content research → planning → writing → review, but the engine does not contain content-specific rules.
+**Filesystem-first, prompt-first AI workflow interpreter.** Create an `awe.json`, put numbered Markdown prompts in folders, and run them via a CLI named **`awe`**. Designed for content research → planning → writing → review, but the engine does not contain content-specific rules.
 
-> **v0.1 foundation:** Working CLI and deterministic routing. The default `echo` executor is a wiring-only simulator, **not an LLM**. For real content generation, supply a compatible command-line AI agent. This is not yet a durable, production-ready workflow service.
+> **v0.2:** a four-command CLI (`init`, `run`, `show`, `check`) over a deterministic workflow engine. AWE never pretends to
+> have called an AI: without a configured command, `awe run` stops and tells you how to set one; `awe run --dry` previews
+> the prompts. This is not yet a durable, production-ready workflow service.
 
 ## Installation: CLI vs Agent Skill
 
@@ -27,64 +29,32 @@ cd ai-workflow-engine
 npm install         # no external runtime dependencies
 npm link            # exposes `awe` locally
 
-awe init --template content --out my-content-workflow
-awe validate my-content-workflow/ENTRY.md
-awe plan my-content-workflow/ENTRY.md
-awe simulate my-content-workflow/ENTRY.md --var topic="Choosing coffee beans"
+awe init coffee     # creates the workflow; writes the first AI CLI found on PATH into awe.json
+cd coffee
+awe run --dry       # preview every prompt; calls nothing
+awe run 1.1         # run step 1.1, then look at it:  awe show 1.1
+awe run 1.2         # 1.1 comes from the cache, only 1.2 runs
+awe run             # the whole workflow, from the start
 ```
 
-To inspect a run, `cd` into the workflow directory and use the run ID printed by the command:
+The AI command is one line in `awe.json`:
 
-```sh
-awe status <run-id>
-awe inspect <run-id> --step 1.2
+```json
+{ "version": 2, "run": "claude -p {prompt}", "timeout": 300 }
 ```
 
-`awe explain examples/content-generation/ENTRY.md --step 3.1.1` shows how a step is located and configured.
+`{prompt}` is the rendered prompt (a very long one becomes a file path automatically), `{prompt_file}` is the path of the
+saved prompt, and a command with neither receives the prompt on stdin. Different steps can use different commands and
+time limits. Every `awe run` states whether it used the cache, and what it ran or reused.
 
-### Create a workflow
-
-`awe init --template content --out DIR` copies the bundled six-step content example into a new directory. The template includes default inputs, sequential drafting, parallel reviews and a delivery step. `content` is the default template. Existing directories (including empty ones), files and symlinks are refused; there is no overwrite option. Initialization makes no model calls or network requests and uses the echo executor. Edit the prompts and `awe.json`, then validate, plan and simulate before configuring a real executor. Existing workflows and run formats are unchanged.
-
-### Simulation and command execution
-
-`awe simulate PATH` always uses the built-in echo executor, even when `awe.json` configures an external AI command. It accepts `--var name=value` and `--json`; executor options (`--executor`, `--command`, `--arg`) are rejected. No external executor is started, and an AI CLI does not need to be installed or authenticated.
-
-Simulation renders ENTRY and step templates, writes artifacts, and follows the same sequence/IF/LOOP/PARALLEL rules as a run. Its artifacts contain **rendered prompts**, not generated content or reviewer verdicts. An IF depending on an echoed prompt may choose a different branch than a real executor; a LOOP waiting for an AI-generated `PASS` can fail with `LOOP_EXHAUSTED`. Use `plan` to inspect all branches. Simulation does not prove content quality or exercise every possible route.
-
-Both `run` and `status` display an execution label:
-
-```text
-Status: COMPLETED
-Execution: SIMULATED (echo; no AI calls)
-```
-
-New run states store `executionMode: "SIMULATED"` for echo or `"COMMAND"` for an external command. `COMMAND` records how execution happened; it does not certify that a model was called. `awe run PATH --json` and `awe simulate PATH --json` return the stored run state, including this field, as does `awe status RUN_ID --json`.
-
-Compatibility: `awe run` still respects CLI/configured executors and defaults to echo only when none is configured. Explicit `--executor echo` is also labeled `SIMULATED`. Existing status values (`COMPLETED`, `FAILED`, `INTERRUPTED`) and exit codes remain unchanged; execution mode is separate from success/failure. Text `status` infers the mode of older runs from their recorded executor, or shows `UNKNOWN` if it was not recorded, without rewriting their state.
-
-### Dev mode: test one step of a long workflow
-
-`awe dev` runs only what you are working on and reuses valid earlier results from previous dev commands:
-
-```sh
-awe dev my-workflow --step 1.50     # first time: runs 1.1-1.49, then 1.50, then stops
-awe dev my-workflow --step 1.50     # after editing 1.50's prompt: 1.1-1.49 reused, only 1.50 runs
-awe dev my-workflow                 # finish the workflow: 1.1-1.50 reused, 1.51 onward runs
-```
-
-It keeps sequence/IF/LOOP/PARALLEL semantics, invalidates only what a change can affect, never silently falls back to an
-older success after a failed rerun, and never shares results with `awe run`. Steps can also declare **named output files**
-(PDF, images, ...) in `awe.json`; AWE saves an immutable per-attempt copy and templates reference it as
-`{{ steps["1.1"].files["report"] }}`. See [docs/dev-mode.md](docs/dev-mode.md) for the rules, recovery behavior
-(`--acknowledge` for commands whose outcome is unknown), storage layout and limits.
+Everything about the commands, the cache rules, per-step executors, output files and crash recovery is in
+[docs/cli.md](docs/cli.md).
 
 ## Workflow convention
 
 ```text
 my-content-workflow/
-├── ENTRY.md                   # entry instructions for the AI
-├── awe.json                   # optional inputs and executor config
+├── awe.json                   # marks the workflow root: inputs, executor, shared "common" text
 ├── stage-1-research/
 │   ├── 1.1-topic-research.md   # default: sequential in numeric order
 │   └── 1.2-outline.md
@@ -98,7 +68,7 @@ my-content-workflow/
     └── 3.2-deliver.md
 ```
 
-All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
+All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches; a folder with no numbered prompts or `FLOW.json` (scratch space a step created) is ignored. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
 
 ### Flow syntax
 
@@ -144,54 +114,23 @@ Or reference its file: {{ steps["1.1"].artifact }}
 Or a declared output file: {{ steps["1.1"].files["report"] }}
 ```
 
-`awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored). No implicit cross-step model memory; state moves through declared values and artifact paths.
+`awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored), and valid results are cached in `.awe/cache/`. No implicit cross-step model memory; state moves through declared values and artifact paths.
 
-`ENTRY.md` is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context. (Behavior change from v0.1: ENTRY.md used to be passed through verbatim, so a literal `{{ ... }}` there must now be escaped as `\{{`.) Template errors name the file (or step, or `FLOW.json` expression) and line. Use `{{ input.audience }}`, rather than `{{ audience }}`. `validate`, `plan`, and `run` check template syntax in ENTRY, prompts, and control expressions before execution; they also reject unknown/forward step references, references between parallel siblings before their join, and branch-only outputs used after an IF. Checks conservatively cover every branch and the first loop iteration; even a currently fixed input gate does not make a branch-only output unconditional. LOOP exit expressions can read body results. Input declarations/required values are not statically checked because `--var` can supply them later. Previously these structural mistakes failed during execution; CLI commands now fail before creating a run or calling an executor. Direct `startRun` library callers retain runtime checks.
+The optional `"common"` text in `awe.json` (a string, or an array of lines) is rendered with the same placeholder syntax and prepended to **every** step prompt, using that step's available context, so it can use `{{ input.* }}` but not step outputs. Editing it makes every cached step stale (see [Common text](docs/cli.md#common-text-common-in-awejson)). There is no separate file for it; v0.1's `ENTRY.md` is no longer used (a leftover one is reported).
 
 Input and step-output values are inserted verbatim, including any `{{ ... }}` they contain. To write literal braces in template source, escape the opening delimiter: `\{{first_name}}` renders as `{{first_name}}`, and `$\{{ secrets.X }}` renders as `${{ secrets.X }}`. In JSON strings, write the backslash as `\\`. An unescaped unsupported or unclosed expression is an `INVALID_TEMPLATE` error.
 
-To keep compiled prompts for debugging, set `"storePrompts": true` in `awe.json`. Each step then records a `prompt` path to `artifacts/prompt-<step>-attempt-N.md` in its state. This is off by default: compiled prompts can contain private inputs. Outputs and inputs are already stored in run state/artifacts; protect the whole `.awe` directory accordingly.
+Rendered prompts are saved next to each step's output (`awe show 1.2 --prompt`). Set `"storePrompts": false` in `awe.json` to keep them only for the moment a command needs them: prompts can contain private inputs. Outputs and inputs are stored in run state/artifacts either way; protect the whole `.awe` directory.
 
-### Real AI CLI executor
-
-Configure a command that reads its prompt from **stdin** and prints a complete step result to **stdout**. No shell evaluation is performed:
+### Connecting an AI CLI
 
 ```json
-{
-  "version": 1,
-  "input": { "topic": "coffee" },
-  "executor": {
-    "type": "command",
-    "argv": ["your-ai-cli", "--stdin"],
-    "timeoutMs": 120000
-  }
-}
+{ "version": 2, "run": "claude -p {prompt}" }
 ```
 
-Or override it at invocation time:
+The command is split into arguments and started directly: **no shell evaluation is performed**. It must print a complete step result to **stdout**. Common choices: `claude -p {prompt}`, `codex exec {prompt}`, `opencode run {prompt}`, `omp -p` (prompt on stdin). Every provider has different arguments and output conventions: verify the CLI's behaviour before connecting it. Commands inherit the invoker's permissions and may incur model charges. Never execute an untrusted workflow with a privileged agent. No live AI calls are part of the automated tests.
 
-```sh
-awe run ./my-content-workflow --executor command --command your-ai-cli --arg --stdin --var topic="coffee"
-```
-
-`your-ai-cli` is a placeholder; every provider has different arguments and output conventions. Verify the CLI's stdin/stdout behavior before connecting it. Command executors inherit the invoker's permissions and may incur model charges. Never execute an untrusted workflow with a privileged agent.
-
-For an installed and authenticated Claude Code CLI, a concrete configuration is:
-
-```json
-{
-  "version": 1,
-  "executor": {
-    "type": "command",
-    "argv": ["claude", "-p", "--model", "claude-haiku-5-5"],
-    "timeoutMs": 120000
-  }
-}
-```
-
-This model/configuration was reported working in [issue #3](https://github.com/wahengchang/ai-workflow-engine/issues/3); choose a model available to your Claude account. `-p` reads the prompt from stdin and writes the answer to stdout. No live Claude calls are part of the automated tests.
-
-`--command claude --arg -p` implies `--executor command`, including when `awe.json` defaults to echo. An explicit conflicting executor is rejected, and `--arg` requires `--command`. Multiline `--var` values are supported within your OS command-line size limit. Executor argument values are omitted from stored executor metadata; only type and executable are recorded. Executor errors redact exact argument strings and `--option=value` payloads before truncating stderr, so provider diagnostics cannot copy those values into the CLI or saved errors/events. This can also hide non-secret argument text. This is exact-value redaction, not a general secret scanner: transformed credentials, environment-only secrets, inputs, successful outputs, and opt-in prompts may still contain sensitive data. Supply credentials through the executor's supported authentication mechanism rather than command-line arguments.
+Run output and errors show the executable and plain flags only; other arguments appear as `…`. Executor errors redact exact argument strings and `--option=value` payloads before truncating stderr, so provider diagnostics cannot copy those values into the CLI or saved errors/events. This is exact-value redaction, not a general secret scanner: transformed credentials, environment-only secrets, inputs, successful outputs and saved prompts may still contain sensitive data. Supply credentials through the tool's own authentication mechanism or the environment rather than command-line arguments.
 
 SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as `INTERRUPTED`, with `finishedAt` and a `RUN_INTERRUPTED` error. The CLI exits with 130/143/129 respectively (SIGHUP covers a closed terminal or dropped SSH session; executors run in their own process group and would otherwise keep running). On POSIX, interruption and timeout kill the command's process group, including ordinary wrapper descendants; Windows currently kills only the direct child. SIGKILL cannot be trapped. When prompts include customer messages or other untrusted material, explicitly frame that text as data in your instructions.
 
@@ -199,15 +138,12 @@ SIGINT/SIGTERM/SIGHUP stop active commands and save the run and active steps as 
 
 | Command | Purpose |
 |---|---|
-| `awe init [--template content] --out DIR` | Create a new content workflow using echo by default |
-| `awe validate PATH` | Validate file conventions and control groups |
-| `awe plan PATH` | Print statically resolved group and step order |
-| `awe explain PATH --step 1.2` | Display a step's source and configuration |
-| `awe simulate PATH [--var key=value] [--json]` | Use echo only; save rendered prompts and label the run SIMULATED |
-| `awe run PATH ... [--json]` | Use the selected/configured executor; save artifacts and event trace |
-| `awe dev PATH [--step ID [--invocation LOOP=N,...]] [--fresh] [--acknowledge ADDRESS] ...` | Partial execution with reuse of valid dev results; [details](docs/dev-mode.md) |
-| `awe status RUN_ID` | Summarize stored run status |
-| `awe inspect RUN_ID --step 1.2` | Inspect step state (without `--step`, full run trace) |
+| `awe init DIR` | Create a content workflow in a new folder and configure the AI CLI found on PATH |
+| `awe run [DIR] [STEP]` | Run the workflow, or one step (earlier steps come from the cache). Flags: `--var`, `--cache`/`--no-cache`, `--dry`, `--executor`, `--timeout`, `--retry`, `--json` |
+| `awe show [DIR] [STEP]` | Latest run summary; a step's output (`--prompt`, `--err` for its prompt or stderr) |
+| `awe check [DIR]` | Validate the workflow, print the plan, check that executors exist |
+
+Exit codes: 0 ok, 1 a step failed, 2 usage/configuration problem, 129/130/143 interrupted. Upgrading from v0.1 (`simulate`, `dev`, `validate`, `plan`, `status`, `inspect`, `explain`, `--executor command --command`): see the [mapping](docs/cli.md#upgrading-from-v01).
 
 A compatible Skill wrapper is provided at `.agents/skills/awe/SKILL.md`.
 
@@ -219,4 +155,4 @@ npm run check
 npm run test:distribution
 ```
 
-See [architecture](docs/architecture.md), [dev mode](docs/dev-mode.md) and [implementation plan](docs/plan.md). Key limitations: no crash-time `resume` of `awe run` (dev mode retries explicitly, never exactly-once), no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.
+See the [CLI guide](docs/cli.md), [architecture](docs/architecture.md) and [implementation plan](docs/plan.md). Key limitations: no automatic crash-time `resume` (an interrupted command is retried explicitly with `--retry`, never exactly-once), no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.

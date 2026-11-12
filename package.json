@@ -11,7 +11,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "check": "node --check bin/awe.js && node --check src/cli.js && node --check src/runtime.js && node --check src/discover.js && node --check src/dev.js && node --check src/dev-store.js && node --check src/outputs.js && npm test",
+    "check": "node --check bin/awe.js && node --check src/cli.js && node --check src/engine.js && node --check src/cache.js && node --check src/executor.js && node --check src/command.js && node --check src/config.js && node --check src/runtime.js && node --check src/discover.js && node --check src/outputs.js && node --check src/show.js && node --check src/dry.js && npm test",
     "test:distribution": "node scripts/check-distribution.mjs"
   },
   "license": "UNLICENSED",
@@ -27,7 +27,7 @@
     "bin/",
     "src/",
     "examples/content-generation/",
-    "docs/dev-mode.md",
+    "docs/cli.md",
     "docs/installation.md",
     "docs/maintenance.md",
     "README.md"

@@ -10,7 +10,7 @@ This policy defines how to keep the **CLI** and **Agent Skill** usable over time
 | npm metadata / package boundary | `package.json` | Run pack+offline-install test; update supported Node matrix |
 | Agent behavior | `.agents/skills/awe/SKILL.md` | Keep valid Agent Skills frontmatter; verify discoverability |
 | Workflow syntax | `src/discover.js`, `src/template.js`, `src/runtime.js` | Version semantics and add regression fixtures |
-| Dev mode and output files | `src/dev.js`, `src/dev-store.js`, `src/outputs.js`, `docs/dev-mode.md` | Keep `docs/dev-mode.md`, README, SKILL.md and `test/dev-*.test.js` in step; changing the fingerprint or session schema needs a migration note and a `SESSION_SCHEMA` bump |
+| Run engine, result cache and output files | `src/engine.js`, `src/cache.js`, `src/outputs.js`, `src/executor.js`, `src/command.js`, `src/config.js`, `docs/cli.md` | Keep `docs/cli.md`, README, SKILL.md and `test/run-partial.test.js`, `test/recovery.test.js`, `test/outputs.test.js`, `test/cli.test.js` in step; changing the fingerprint or session schema needs a migration note and a `SESSION_SCHEMA` bump |
 | Installation and upgrades | `docs/installation.md` | Separate tested, candidate and unpublished routes |
 | Long-term distribution policy | `docs/maintenance.md` | Update when versioning, support or release changes |
 | User-facing summary | `README.md` | Summarize and link rather than duplicating all procedures |
@@ -21,7 +21,7 @@ GitHub Actions `.github/workflows/ci.yml` runs on PRs and pushes to main with mi
 
 1. Node 20, 22, 24 on Linux, plus Node 22 on macOS and Windows.
 2. `npm run check` for existing unit and regression tests.
-3. `npm run test:distribution`: check SKILL metadata, build npm tarball using `npm pack`, reject development/secret files, offline-install the tarball locally and globally in temporary prefixes, link the source with an isolated global prefix, and smoke-test `awe --help`, `validate`, `plan` from the **installed/linked** package. Also exercise npm bin resolution and one-off `npm exec --package=<local-tarball>` from an unrelated working directory. All npm cache writes go to a temporary cache. The test checks that global install creates the command shim; local and one-off npm exec checks launch the actual shim.
+3. `npm run test:distribution`: check SKILL metadata, build npm tarball using `npm pack`, reject development/secret files, offline-install the tarball locally and globally in temporary prefixes, link the source with an isolated global prefix, and smoke-test `awe --help` and `awe check` from the **installed/linked** package. Also exercise npm bin resolution and one-off `npm exec --package=<local-tarball>` from an unrelated working directory. All npm cache writes go to a temporary cache. The test checks that global install creates the command shim; local and one-off npm exec checks launch the actual shim.
 
 No registry credentials, `npm publish`, GitHub Release action, model API key, or paid AI command is used by this CI workflow.
 
@@ -32,15 +32,15 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 - [ ] A precise change summary and supported environment/OS assumptions
 - [ ] Tests for any CLI, packaging, Skill frontmatter or versioning behavior changes
 - [ ] README, `docs/installation.md` and SKILL.md updated together if CLI commands changed
-- [ ] Compatibility notes for existing `ENTRY.md`, `awe.json`, `FLOW.json` and numbered prompts
-- [ ] No new credentials, tokens, `.env`, `.awe/runs`, `.awe/dev`, drafts, local files, or private content in the package
+- [ ] Compatibility notes for existing `awe.json`, `FLOW.json` and numbered prompts
+- [ ] No new credentials, tokens, `.env`, `.awe/runs`, `.awe/cache`, drafts, local files, or private content in the package
 - [ ] Clear handling for deprecated options and previous installed versions
 - [ ] `npm run check` and `npm run test:distribution` green (plus GitHub CI)
 - [ ] Changes linked to a GitHub Issue; installation behavior verified before claiming support
 
 ## Versioning and support
 
-- Use **SemVer** for the npm CLI package and Git tags. Keep CLI `--help`, `ENTRY.md`, numbered file discovery and control-group schema stable for patch/minor releases.
+- Use **SemVer** for the npm CLI package and Git tags. Keep CLI `--help`, `awe.json`, numbered file discovery and control-group schema stable for patch/minor releases.
 - When an upgrade breaks syntax or artifact formats, announce migration steps and consider major-version bump.
 - Keep `awe` Engine version separate from the `awe` Skill's Git ref; document which versions were tested together.
 - Use full commit SHAs or signed/versioned release tags when users need reproducibility; avoid silently pulling latest `main`.

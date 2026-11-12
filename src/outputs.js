@@ -34,7 +34,7 @@ export function declaredOutputs(config, tree) {
     const where = `steps["${id}"]`;
     assertAwe(promptIds.has(id), 'INVALID_CONFIG', `awe.json ${where} does not match a prompt step`);
     assertAwe(spec && typeof spec === 'object' && !Array.isArray(spec), 'INVALID_CONFIG', `awe.json ${where} must be an object`);
-    for (const key of Object.keys(spec)) assertAwe(key === 'outputs', 'INVALID_CONFIG', `awe.json ${where} has unsupported key "${key}"`);
+    for (const key of Object.keys(spec)) assertAwe(['outputs', 'executor', 'timeout'].includes(key), 'INVALID_CONFIG', `awe.json ${where} has unsupported key "${key}". Supported: outputs, executor, timeout`);
     if (spec.outputs === undefined) continue;
     assertAwe(Array.isArray(spec.outputs) && spec.outputs.length > 0, 'INVALID_CONFIG', `awe.json ${where}.outputs must be a non-empty array`);
     const names = new Set();
@@ -186,11 +186,6 @@ export async function captureOutputs({ root, stepId, decls, before, destDir }) {
     throw error;
   }
   return files;
-}
-
-// echo never writes files; templates still need something honest to render.
-export function simulatedFiles(decls) {
-  return Object.fromEntries(decls.map(decl => [decl.name, { path: `[simulated file: ${decl.name}]`, source: decl.path, simulated: true }]));
 }
 
 export const filePaths = files => Object.fromEntries(Object.entries(files).map(([name, file]) => [name, file.path]));
