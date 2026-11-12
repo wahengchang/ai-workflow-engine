@@ -60,7 +60,7 @@ export async function executePrompt(prompt, options) {
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
       cwd: options.cwd,
-      env: process.env,
+      env: options.env ? { ...process.env, ...options.env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
       detached: process.platform !== 'win32',

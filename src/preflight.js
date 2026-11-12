@@ -10,9 +10,15 @@ export async function validateReferences(entry, tree, sources = new Map()) {
   await assertOutputLocations(entry.root, tree, outputs);
   function check(source, available, label, isCommon = false) {
     for (const reference of templateReferences(source, label)) {
+      if (reference.isCommon && isCommon) {
+        throw new AweError('MISSING_REFERENCE', `${label}: "common" cannot include itself ({{ common }})`);
+      }
+      if (reference.isCommon && entry.common === undefined) {
+        throw new AweError('MISSING_REFERENCE', `${label}: {{ common }} is used, but awe.json has no "common". Add one, e.g. "common": "only reply in zh-tw", or remove {{ common }}`);
+      }
       if (reference.stepId && !available.has(reference.stepId)) {
         const hint = isCommon
-          ? '\nThe common text is added to the prompt of every step, including the first, so it can only use {{ input.* }}. Refer to earlier steps from the step\'s own prompt.'
+          ? '\nThe common text can be used by any step, including the first, so it can only use {{ input.* }}. Refer to earlier steps from the step\'s own prompt.'
           : '';
         throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} is not guaranteed to be available here (unknown, forward, parallel sibling, or conditional reference)${hint}`);
       }
@@ -25,7 +31,6 @@ export async function validateReferences(entry, tree, sources = new Map()) {
   async function visit(node, upstream) {
     const available = new Set(upstream);
     if (node.type === 'prompt') {
-      check(entry.common ?? '', available, `${entry.commonLabel} (while preparing step ${node.id})`, true);
       check(sources.get(node.file) ?? await readFile(node.file, 'utf8'), available, node.relative);
       available.add(node.id);
       return available;
@@ -44,6 +49,8 @@ export async function validateReferences(entry, tree, sources = new Map()) {
     if (node.type === 'loop') check(node.config.until, result, `${node.relative}/FLOW.json (until)`);
     return result;
   }
+  // The common text is checked once: whichever step uses it, no step output exists for it to read.
+  check(entry.common ?? '', new Set(), entry.commonLabel, true);
   await visit(tree, new Set());
   return outputs;
 }

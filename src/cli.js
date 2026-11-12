@@ -6,7 +6,7 @@ import { getPlan } from './runtime.js';
 import { runWorkflow, parseStepArg, displayAddress } from './engine.js';
 import { dryRun } from './dry.js';
 import { AweError } from './errors.js';
-import { validateTemplate } from './template.js';
+import { validateTemplate, templateReferences } from './template.js';
 import { initWorkflow } from './init.js';
 import { validateReferences } from './preflight.js';
 import { resolveExecutor, noExecutorError } from './config.js';
@@ -177,9 +177,15 @@ async function prepare(cwd, dir) {
     if (node.type === 'loop') validateTemplate(node.config.until, `${node.relative}/FLOW.json (until)`);
   }
   const outputs = await validateReferences(entry, tree, sources);
-  const promptIds = flatten(tree).filter(node => node.type === 'prompt').map(node => node.id);
-  const warnings = [...entry.settings.warnings, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
-  return { entry, tree, promptIds, sources, outputs, warnings };
+  const promptNodes = flatten(tree).filter(node => node.type === 'prompt');
+  const promptIds = promptNodes.map(node => node.id);
+  // The steps whose prompt writes {{ common }}: only they get the shared text, and only they pay for it.
+  const commonUsers = promptNodes.filter(node => templateReferences(sources.get(node.file) ?? '').some(reference => reference.isCommon)).map(node => node.id);
+  const unused = entry.common !== undefined && entry.common.trim() && !commonUsers.length
+    ? ['awe.json has "common", but no prompt writes {{ common }}, so it is not sent to any step. Put {{ common }} in the prompts that need it.']
+    : [];
+  const warnings = [...entry.settings.warnings, ...unused, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
+  return { entry, tree, promptIds, sources, outputs, warnings, commonUsers };
 }
 
 // JSON consumers (CI) do not read stderr: carry the warnings in the document itself.
@@ -209,13 +215,13 @@ async function initCommand({ dir }, cwd, options = {}) {
   lines.push(agent
     ? `Executor  ${agent.run}   (found ${agent.name} on PATH; change "run" in awe.json to use another)`
     : 'Executor  none found on PATH. Add one to awe.json, e.g.  "run": "claude -p {prompt}"');
-  lines.push('Common    the "common" text in awe.json is added to the prompt of every step; keep it short', '', `Next  cd ${into}`, '      awe run --dry     preview every prompt; calls nothing');
+  lines.push('Common    the "common" text in awe.json appears wherever a prompt writes {{ common }}', '', `Next  cd ${into}`, '      awe run --dry     preview every prompt; calls nothing');
   lines.push(agent ? '      awe run 1.1       run the first step for real' : '      awe check         shows what is missing');
   return { output: lines.join('\n'), code: 0, warnings: [] };
 }
 
 async function checkCommand({ dir, flags }, cwd) {
-  const { entry, tree, promptIds, warnings } = await prepare(cwd, dir);
+  const { entry, tree, promptIds, warnings, commonUsers } = await prepare(cwd, dir);
   const plan = getPlan(tree);
   const names = new Set(['run', ...promptIds.map(id => entry.settings.steps[id]?.executor ?? 'run')]);
   const executors = [];
@@ -230,10 +236,10 @@ async function checkCommand({ dir, flags }, cwd) {
   // The exit code answers "is the workflow valid?" (invalid workflows throw, exit 2). A missing executor is
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
   const commonChars = (entry.common ?? '').trim().length;
-  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, addedToSteps: commonChars ? promptIds.length : 0 }, promptSteps: promptIds.length, plan, executors: used };
+  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, usedBySteps: commonUsers }, promptSteps: promptIds.length, plan, executors: used };
   if (flags.json) return { output: JSON.stringify(withWarnings(result, warnings), null, 2), code: 0, warnings };
   const lines = [`VALID ${path.basename(entry.root)} (${promptIds.length} prompt steps)`];
-  if (commonChars) lines.push(`Common    ${commonChars} characters (${entry.commonLabel}), added to the prompt of every step${commonChars > 4000 ? '. That is large: every step pays for it, and any edit reruns every step' : ''}`);
+  if (commonChars) lines.push(`Common    ${commonChars} characters, written into ${commonUsers.length ? `${commonUsers.length} of ${promptIds.length} steps by {{ common }}${commonUsers.length < promptIds.length && commonUsers.length <= 8 ? ` (${commonUsers.join(', ')})` : ''}` : 'no step (nothing writes {{ common }})'}${commonChars > 4000 ? '. That is large: each of those steps pays for it, and any edit reruns them' : ''}`);
   lines.push(prettyPlan(plan), '');
   for (const item of used) {
     if (!item.display) lines.push(`Executor  ${item.name}: NOT CONFIGURED`);

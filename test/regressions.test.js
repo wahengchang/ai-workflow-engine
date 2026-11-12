@@ -90,7 +90,7 @@ test('template data is never reinterpreted and escaped literals render once', ()
 test('the command string, multiline --var, and braces round-trip through CLI and the common text', async t => {
   const dir = await fixture(t, {
     '1.1-copy.md': '{{ input.mail }}',
-    '1.2-consume.md': '{{ steps["1.1"].output }}',
+    '1.2-consume.md': '{{ common }}\n{{ steps["1.1"].output }}',
   }, { version: 2, common: 'Audience: {{ input.mail }}; literal \\{{ audience }}', run: `${quote(process.execPath)} -e "process.stdin.pipe(process.stdout)"` });
   const value = 'Hi {{first_name}}\n${{ secrets.X }}\r\n你好';
   const result = await cli(['run', dir, '--var', `mail=${value}`, '--json']);
@@ -147,8 +147,7 @@ test('executor argument values are omitted from state; prompts are kept as files
   assert.ok(!text.includes('argv'));
   assert.deepEqual((await readdir(path.join(dir, '.awe/runs', state.runId, 'artifacts'))).sort(), ['1-1-attempt-1.md', 'prompt-1-1-attempt-1.md']);
   const prompt = await readFile(state.steps['1.1'].prompt, 'utf8');
-  assert.match(prompt, /^# Common instructions\n# Instructions\n\n# Step 1\.1 /);
-  assert.match(prompt, /OUTPUT::ok/);
+  assert.equal(prompt, 'OUTPUT::ok', 'the prompt is the step file, rendered, with nothing added');
   assert.equal((await cli(['show', dir, '1.1', '--prompt'])).output, prompt.trimEnd());
 
   const quiet = await fixture(t, { '1.1-a.md': 'OUTPUT::ok' }, { version: 2, run: `${quote(process.execPath)} ${quote(agent)}`, storePrompts: false });

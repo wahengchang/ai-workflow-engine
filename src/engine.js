@@ -12,7 +12,7 @@ import { assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs
 import { openSession, workspaceSalt } from './cache.js';
 
 // Bump when the parts of a fingerprint change, so records written by an older awe are recognised.
-const FINGERPRINT_VERSION = 2;
+const FINGERPRINT_VERSION = 3;
 
 // ── Addresses ───────────────────────────────────────────────────────────────
 // A step ID names the prompt; an *occurrence* names which pass through enclosing LOOPs
@@ -389,11 +389,14 @@ async function walkPrompt(node, context, sh, scope) {
   const executor = sh.resolveExecutor(id);
   const executorDigest = secretDigest(sh.salt, { argv: executor.argv });
   const upstream = precontext(context, ord);
-  const references = [...templateReferences(sh.entry.common ?? ''), ...templateReferences(source)].filter(ref => ref.stepId);
+  const sourceReferences = templateReferences(source);
+  const usesCommon = sourceReferences.some(ref => ref.isCommon);
+  const references = sourceReferences.filter(ref => ref.stepId);
   const inputs = [...new Map(references.map(ref => [ref.expression, { step: ref.stepId, field: ref.fileName ? `files.${ref.fileName}` : ref.field, resultId: context.steps[ref.stepId]?.resultId ?? null }])).values()];
   const parts = {
     v: FINGERPRINT_VERSION, plan: node.relative, address, control: scope.control,
-    common: sh.commonDigest, source: sha256(source), input: sh.inputDigest, executor: executorDigest,
+    // Only the steps that write {{ common }} depend on it; editing it must not rerun the others.
+    common: usesCommon ? sh.commonDigest : null, source: sha256(source), input: sh.inputDigest, executor: executorDigest,
     outputs: decls, upstream: upstream.map(([step, result]) => [step, result.resultId]), prompt: sha256(prompt),
   };
   const fingerprint = digestOf(parts);
@@ -458,6 +461,7 @@ async function walkPrompt(node, context, sh, scope) {
     const output = await executePrompt(prompt, {
       argv: executor.argv, timeoutMs: executor.timeoutMs, cwd: sh.entry.root, signal: sh.signal,
       promptFile, onStderr: tail => { stderrTail = tail; },
+      env: { AWE_STEP: id, AWE_ADDRESS: displayAddress(address), AWE_RUN_ID: state.runId },
     });
     phase = 'record';
     assertAwe(typeof output === 'string', 'INVALID_RESULT', `Step ${id} produced invalid output`);

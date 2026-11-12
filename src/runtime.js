@@ -1,13 +1,15 @@
-import { renderTemplate } from './template.js';
+import { renderTemplate, templateReferences } from './template.js';
 import { flatten } from './discover.js';
 
-// The prompt a step sends: the common text (if the workflow has any), then the step. Shared by awe run
+// The prompt a step sends is its own file, rendered, and nothing else: no headers, no preamble. The
+// shared text from awe.json "common" appears only where a prompt writes {{ common }}. Shared by awe run
 // and awe run --dry so both build byte-identical prompts.
 export function buildPrompt(entry, source, context, node) {
-  const compiled = renderTemplate(source, context, node.relative);
-  const common = entry.common?.trim() ? renderTemplate(entry.common.trim(), context, `${entry.commonLabel} (while preparing step ${node.id})`) : '';
-  const head = common ? `# Common instructions\n${common}\n\n` : '';
-  return `${head}# Step ${node.id} (${node.relative})\n${compiled}\n`;
+  const usesCommon = templateReferences(source).some(reference => reference.isCommon);
+  const common = usesCommon && entry.common !== undefined
+    ? renderTemplate(entry.common.trim(), { input: context.input, steps: {} }, `${entry.commonLabel} (used by step ${node.id})`)
+    : undefined;
+  return renderTemplate(source, { ...context, common }, node.relative);
 }
 
 export function gateValue(value, config, expected = false) {

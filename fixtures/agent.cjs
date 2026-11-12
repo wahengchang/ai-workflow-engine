@@ -18,7 +18,7 @@ let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', async () => {
-  const step = /^# Step (\S+) /m.exec(input)?.[1] ?? '?';
+  const step = process.env.AWE_STEP ?? '?';
   let n = 1;
   if (logFile) {
     const previous = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)) : [];

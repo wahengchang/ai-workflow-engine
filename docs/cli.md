@@ -68,6 +68,9 @@ A prompt is a Markdown file with variables; awe fills them in and saves the resu
 pass as an argument (over 64 KB; 16 KB on Windows) `{prompt}` automatically becomes one line, `Read and follow the
 instructions in the file: <path>`, so there is no need to write a wrapper script.
 
+The command also receives three environment variables: `AWE_STEP` (`1.2`), `AWE_ADDRESS` (`2.1.1@2` inside a loop) and
+`AWE_RUN_ID`, so a wrapper script can tell which step it is serving. The prompt itself carries no step header.
+
 Common commands:
 
 ```text
@@ -143,7 +146,7 @@ A stored result is reused only if all of this still holds:
 | You change… | Effect |
 | --- | --- |
 | a step's prompt | that step and everything after it in order run again; earlier steps are kept |
-| the common text | every step is stale (it is part of every prompt) |
+| the common text | the steps that write `{{ common }}` are stale; the others are kept |
 | an input (`--var`, `awe.json`) | everything is stale, and the old results are kept under the old input |
 | rerun a step (`awe run 1.2`) | everything that could see its result is stale, **even if the new output is identical** |
 | a stored file or artifact | `CACHE_INVALID` is recorded; that step and its dependents run again |
@@ -197,43 +200,52 @@ checks wiring and wording; it says nothing about what a model will answer.
 ## Common text (`"common"` in `awe.json`)
 
 A workflow is a folder that holds `awe.json` (it can be as small as `{ "version": 2 }`); awe finds it from any sub-folder by
-walking up. `"common"` is the optional text every step shares: who the AI is working as, the audience, tone, rules
-("never invent sources"), the output format. It is not a step and never runs on its own.
+walking up. `"common"` is optional text you want to reuse in several prompts: who the AI is working as, the audience, tone,
+rules ("never invent sources"), the output format. It is **not** added to anything automatically. A prompt includes it
+where, and only where, it writes `{{ common }}`:
 
 ```json
 {
   "version": 2,
+  "input": { "topic": "tea" },
   "common": [
-    "You write for beginners about {{ input.topic }}.",
-    "Never invent sources."
+    "Only reply in zh-TW.",
+    "You write for beginners about {{ input.topic }}."
   ]
 }
 ```
 
+```md
+<!-- 1.3-final.md -->
+{{ common }}
+
+Write the final checklist, one step per line.
+```
+
 | | |
 | --- | --- |
-| **Form** | a string, or an array of lines (joined with newlines; easier to read than one long string). Optional: without it a step's prompt is just the step. |
-| **Used** | on **every step of every run**. The prompt a step sends is `# Common instructions`, your text, then `# Step 1.2 (…)`, the step's own prompt. `awe show 1.2 --prompt` prints exactly that. |
-| **Variables** | rendered like a prompt, so `{{ input.topic }}` works. It cannot use `{{ steps[...] }}`: it is added to the first step too, where no step has run yet. Put step references in the step's own prompt. |
-| **Only the root one** | an `awe.json` in a sub-folder (`stage-2/awe.json`) is **not** used for that folder's steps. `awe check` / `awe run` warn about it. There is no per-stage common text: put it in that folder's step prompts, or in the root `awe.json`. Running awe from inside `stage-2/` would treat that folder as its own, separate workflow. |
-| **Not** | a README for people (everything in it is sent, and paid for, on every step) and not a place for values that change per run (use `input`). |
+| **What a step sends** | its own prompt file, rendered, and nothing else: no header, no preamble. `awe show 1.3 --prompt` prints exactly that. With the example above the step sends `Only reply in zh-TW.` / `You write for beginners about tea.` / a blank line / `Write the final checklist…`. |
+| **Form** | a string, or an array of lines (joined with newlines; easier to read than one long string). Leading and trailing whitespace is trimmed. |
+| **Where** | anywhere in a prompt, any number of times, in any position: first line, last line, inside a sentence. The spelling is fixed: `{{ common }}` (spaces optional). |
+| **Variables** | it is rendered like a prompt, so `{{ input.topic }}` works. It cannot use `{{ steps[...] }}` (any step may use it, including the first, where nothing has run yet) or `{{ common }}` itself. Put step references in the step's own prompt. |
+| **Mistakes** | `{{ common }}` in a prompt but no `"common"` in `awe.json`: error at `awe check`. `"common"` defined but no prompt writes it: warning, because it is sent nowhere. |
+| **Only the root one** | an `awe.json` in a sub-folder (`stage-2/awe.json`) is **not** used for that folder's steps. `awe check` / `awe run` warn about it. Running awe from inside `stage-2/` would treat that folder as its own, separate workflow. |
 
-Every step is its own AI call with no memory of the others, so the common text is sent with each one: a hundred steps send it
-a hundred times, once per call, never accumulating. Keep it short because every step pays for it, not because of how it is
-written.
+Every step is its own AI call with no memory of the others, so a step that writes `{{ common }}` sends it with that call: a
+hundred such steps send it a hundred times, once per call, never accumulating. Steps that do not write it do not pay for it.
+Keep it short because of that cost, not because of how it is written. `awe check` prints how many steps use it.
 
 Lifecycle:
 
-1. `awe init` writes a starting `"common"`.
-2. `awe check` validates its syntax and references and prints its size. It warns above 4,000 characters.
-3. Each `awe run` (and `awe run --dry`) reads it once at the start and renders it into every step's prompt.
-4. It is part of every step's fingerprint, so **editing it, even a comma, makes every step stale**. The next run that
-   uses the cache says so on each step it reruns: `1.1  ran  18s  (the common text changed)`. For a workflow with slow or
-   costly steps, settle it early and put anything that varies in the step prompts or in `input`.
+1. `awe init` writes a starting `"common"`, and its prompts start with `{{ common }}`.
+2. `awe check` validates its syntax and references and prints its size and which steps use it. It warns above 4,000 characters.
+3. Each `awe run` (and `awe run --dry`) reads it once at the start and renders it into the prompts that write `{{ common }}`.
+4. Only those steps depend on it: **editing it, even a comma, makes exactly the steps that write `{{ common }}` stale**, and
+   the next run that uses the cache says so on each one it reruns: `1.3  ran  18s  (the common text changed)`.
 5. Run outputs keep the rendered prompt per attempt, so the exact text that was sent stays inspectable.
 
-Rule of thumb: if it is true for every step, it belongs in `"common"`; if it is true for one step, it belongs in that step's
-prompt; if it changes between runs, it belongs in `input` (`--var`).
+Rule of thumb: if several prompts need the same text, put it in `"common"` and write `{{ common }}` where it belongs; if one
+prompt needs it, write it in that prompt; if it changes between runs, put it in `input` (`--var`).
 
 There is no file for this on purpose: v0.1's `ENTRY.md` did two jobs under a misleading name (root marker and shared text),
 and a `COMMON.md` would only rename the problem. A leftover `ENTRY.md` is not used; `awe check` / `awe run` warn about it, and a
@@ -248,7 +260,7 @@ Steps run in numeric order, not file-name order: `1.1`, `1.2`, then everything i
 prefix (`2.1-review/`) or a `stage-N` name (`stage-2/`): a folder just called `2/` that holds prompts is rejected, with
 the name to use instead.
 
-A step receives exactly two things: the root common text, then its own prompt, with `{{ … }}` filled in. It does not
+A step receives exactly one thing: its own prompt, with `{{ … }}` filled in (including `{{ common }}`, if it writes it). It does not
 receive earlier steps' prompts or outputs, and the AI keeps no memory between steps. To use an earlier result, name it in
 the step's prompt: `{{ steps["1.1"].output }}` (the text) or `{{ steps["1.1"].artifact }}` (the file path).
 
@@ -386,7 +398,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `awe status`, `awe inspect`, `awe explain` | `awe show` |
 | `awe validate`, `awe plan` | `awe check` |
 | `awe init --template content --out DIR` | `awe init DIR` |
-| `ENTRY.md` (root marker and text added to every prompt) | `awe.json` marks the root; the shared text is its `"common"` field. `ENTRY.md` is no longer used: a leftover one is reported, and a v0.1 folder without `awe.json` is rejected with the migration steps |
+| `ENTRY.md` (root marker, and text added to every prompt) | `awe.json` marks the root; the shared text is its `"common"` field, which a prompt includes with `{{ common }}` (nothing is added automatically). `ENTRY.md` is no longer used: a leftover one is reported, and a v0.1 folder without `awe.json` is rejected with the migration steps |
 
 The old `executor: { type, argv, timeoutMs }` block in `awe.json` still works and prints a deprecation warning with the
 replacement; `"type": "echo"` no longer exists. Old `.awe/runs` and `.awe/dev` folders are neither read nor deleted; `.awe/dev` (the v0.1 cache) is no longer used and is safe
