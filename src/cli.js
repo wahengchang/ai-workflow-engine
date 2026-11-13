@@ -313,6 +313,8 @@ function nextHint(state, promptIds, entry, overrides) {
     return `awe run ${failed} --timeout ${Math.ceil(seconds(current) * 2)}${retry}    (limit now ${seconds(current)}s)   ·   awe show ${failed} --err`;
   }
   if (state.error.code === 'UNKNOWN_EFFECT') return null;
+  // The command finished; what it printed was rejected. Fix the prompt (or the declaration) and run the step again.
+  if (['OUTPUT_NOT_JSON', 'OUTPUT_JSON_INVALID'].includes(state.error.code)) return `awe run ${failed}   (after fixing the prompt, or the "json" declaration in awe.json)`;
   return `awe show ${failed} --err   ·   awe run ${failed}${retry}`;
 }
 

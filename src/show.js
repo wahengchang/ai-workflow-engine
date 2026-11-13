@@ -63,6 +63,11 @@ export function renderSteps(state, root) {
       lines.push(`  ${name} RUNNING`);
     } else {
       lines.push(`  ${name} ${item.status}  ${firstLine(item.error?.message ?? '')}`.trimEnd());
+      // Most messages fit on the line. Output-checking errors say what to fix on the lines after it.
+      // (A command's own failure is not repeated: its stderr is printed below.)
+      const more = String(item.error?.message ?? '').split('\n').slice(1);
+      if (more.length && !String(item.error?.code ?? '').startsWith('EXECUTOR_')) lines.push(indent(more.join('\n'), 10));
+      if (item.rejectedArtifact) lines.push(indent(`The model's raw output is saved in ${rel(item.rejectedArtifact)}`, 10));
       if (item.stderrTail) {
         // The failure message already quotes the start of stderr; do not print that line twice.
         const tail = item.stderrTail.split('\n');

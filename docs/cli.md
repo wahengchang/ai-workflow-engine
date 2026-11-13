@@ -314,6 +314,76 @@ Parallel steps may not declare the same location (`OUTPUT_CONFLICT`, also throug
 through a symlink at all (`OUTPUT_INVALID`). Discovery skips each declared file and the generated folders leading to it,
 so generated files never count as steps. Only named files are supported: no directories, no wildcards.
 
+## JSON output
+
+A step can promise that its answer is JSON. awe parses and checks it **before the step counts as done**, so a later prompt
+can read parts of it, and a bad answer stops the workflow where it happened. Declare it per step in `awe.json`:
+
+```json
+{
+  "version": 2,
+  "steps": {
+    "1.1": {
+      "json": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 3,
+        "items": { "type": "object", "required": ["role", "perspective"] }
+      }
+    }
+  }
+}
+```
+
+`"json": true` means "any valid JSON". Later prompts read it by key and index:
+
+```md
+Role: {{ steps["1.1"].json[0].role }}
+View: {{ steps["1.1"].json[0].perspective }}
+```
+
+With three parallel steps `1.2.1`, `1.2.2`, `1.2.3` reading `[0]`, `[1]` and `[2]`, each branch gets its own role. Nothing
+else changes: `{{ steps["1.1"].output }}` is still the raw text and `{{ steps["1.1"].artifact }}` the saved file.
+
+**Reading values.** A path is `.key`, `[0]` or `["key with spaces"]`, one after another. A string is inserted as it is, a number
+or boolean as its text, an object or array as compact JSON (so `{{ steps["1.1"].json }}` is the whole value). There is no
+arithmetic, no calls and no other syntax: a template cannot run code, and `__proto__` or `constructor` are not reachable. A
+missing key or an index past the end is an error that names the place: `There is no "perspective" at json[1] (it has: role)`,
+`Index 2 is out of range at json: the array has 2 items`. The same paths work in `FLOW.json` gates:
+`"test": "{{ steps[\"2.1\"].json.verdict }}"`.
+
+**What counts as JSON.** The **whole** output must be JSON. A Markdown code fence, or any text before or after it, is an
+error (`OUTPUT_NOT_JSON`) that says which, and tells you to ask the model for the JSON alone. Ask for that in the prompt
+("Reply with only the JSON, no code fence, no explanation").
+
+**The declaration.** A small subset of JSON Schema; any other key is rejected when `awe.json` is read, so a typo is never
+silently ignored:
+
+| Key | Meaning |
+| --- | --- |
+| `type` | `object`, `array`, `string`, `number`, `integer`, `boolean`, `null` (or a list of them) |
+| `minItems`, `maxItems` | array length; both `3` means exactly three |
+| `items` | a declaration every array item must satisfy |
+| `required` | field names an object must have |
+| `properties` | declarations for named fields, applied when the field is present |
+| `enum` | the allowed values |
+
+A violation (`OUTPUT_JSON_INVALID`) lists what is wrong, with paths, for example `$ must have exactly 3 items, got 2` or
+`$[1].perspective is required`. Either way the step fails, **no later step starts** (a parallel group after it never forks),
+and the model's raw output stays saved, so the failure shows where: `The model's raw output is saved in .awe/runs/…`. It is a
+known failure, not an unknown outcome: fix the prompt or the declaration and run the step again, no `--retry` needed.
+
+**Checks.** `awe check` verifies the syntax of every JSON reference and that the step it reads is declared (and runs earlier),
+but not the data, which does not exist yet; that is checked when the step runs. `awe run --dry` shows
+`[json of 1.1[0].role]` where a value would go.
+
+**Cache.** The declaration is part of the step's fingerprint: changing or removing it reruns the step (and so the steps that
+read it) and says `(its JSON declaration changed)`. A cached JSON step is parsed again when it is reused, so later steps still read
+it, and a stored output that no longer fits its declaration is rerun instead of reused.
+
+**Limits.** The number of parallel branches is still written in `FLOW.json`: this reads values out of one answer, it does not
+create a branch per array item (a dynamic `foreach` would be a separate feature).
+
 ## Interruptions, crashes and unknown outcomes
 
 Writes happen in a fixed order so that a crash can never produce a result that looks valid:
@@ -382,6 +452,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `CACHE_BUSY` | another `awe run` is using this workflow's cache |
 | `EXECUTOR_TIMEOUT`, `EXECUTOR_FAILED`, `EXECUTOR_ERROR` | the command timed out, exited non-zero, or could not start |
 | `OUTPUT_MISSING`, `OUTPUT_STALE`, `OUTPUT_INVALID`, `OUTPUT_CONFLICT` | see [output files](#output-files) |
+| `OUTPUT_NOT_JSON`, `OUTPUT_JSON_INVALID` | a step declared as JSON answered with something else, or with JSON that does not fit; see [JSON output](#json-output) |
 | `RUN_NOT_FOUND`, `PROMPT_NOT_STORED` | `awe show` has nothing to show |
 
 ## Upgrading from v0.1

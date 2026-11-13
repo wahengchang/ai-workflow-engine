@@ -18,6 +18,7 @@ export async function dryRun(entry, tree, { input = {}, step, sources, outputs =
     const prompt = buildPrompt(entry, sources?.get(node.file) ?? await readFile(node.file, 'utf8'), context, node);
     if (step === undefined || node.id === step) rendered.push({ id: node.id, source: node.relative, prompt });
     context.steps[node.id] = {
+      dry: true,
       output: `[output of ${node.id}]`,
       artifact: `[artifact of ${node.id}]`,
       files: Object.fromEntries((outputs.get(node.id) ?? []).map(decl => [decl.name, `[file ${decl.name} of ${node.id}]`])),
