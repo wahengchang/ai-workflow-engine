@@ -1,5 +1,6 @@
 import { AweError, assertAwe } from './errors.js';
 import { splitCommand, displayCommand, fullCommand } from './command.js';
+import { normalizeJsonDeclaration } from './json-output.js';
 
 export const DEFAULT_TIMEOUT_SECONDS = 300;
 
@@ -80,6 +81,7 @@ export function normalizeConfig(config) {
         step.executor = spec.executor;
       }
       if (spec.timeout !== undefined) step.timeoutMs = seconds(spec.timeout, `steps["${id}"].timeout`);
+      if (spec.json !== undefined && spec.json !== false) step.json = normalizeJsonDeclaration(spec.json, `steps["${id}"]`);
       settings.steps[id] = step;
     }
   }

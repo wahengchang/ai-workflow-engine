@@ -34,7 +34,7 @@ export function declaredOutputs(config, tree) {
     const where = `steps["${id}"]`;
     assertAwe(promptIds.has(id), 'INVALID_CONFIG', `awe.json ${where} does not match a prompt step`);
     assertAwe(spec && typeof spec === 'object' && !Array.isArray(spec), 'INVALID_CONFIG', `awe.json ${where} must be an object`);
-    for (const key of Object.keys(spec)) assertAwe(['outputs', 'executor', 'timeout'].includes(key), 'INVALID_CONFIG', `awe.json ${where} has unsupported key "${key}". Supported: outputs, executor, timeout`);
+    for (const key of Object.keys(spec)) assertAwe(['outputs', 'executor', 'timeout', 'json'].includes(key), 'INVALID_CONFIG', `awe.json ${where} has unsupported key "${key}". Supported: outputs, executor, timeout, json`);
     if (spec.outputs === undefined) continue;
     assertAwe(Array.isArray(spec.outputs) && spec.outputs.length > 0, 'INVALID_CONFIG', `awe.json ${where}.outputs must be a non-empty array`);
     const names = new Set();

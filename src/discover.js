@@ -134,6 +134,9 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
         const match = numbered.exec(entry.name);
         const stage = stageDir.exec(entry.name);
         if (!match && !stage && enforceNumbered && !(await holdsWorkflowContent(path.join(dir, entry.name)))) continue; // scratch folder, not workflow
+        if (!match && !stage && enforceNumbered && /^\d+(?:\.\d+)+$/.test(entry.name)) {
+          throw new AweError('INVALID_STEP', `Directory ${path.join(relative, entry.name)} needs a name after its number, for example ${entry.name}-fan (folders and prompts are named N.N-name)`);
+        }
         assertAwe(Boolean(match || stage || !enforceNumbered), 'INVALID_STEP', `Directory needs a numeric prefix or stage-N name: ${path.join(relative, entry.name)}. It contains workflow files, so rename it (for example ${/^\d+$/.test(entry.name) ? `stage-${entry.name}` : `stage-1-${entry.name}`}); a folder with no numbered prompts or FLOW.json is ignored`);
         if (match) {
           assertAwe(!seen.has(match[1]), 'DUPLICATE_STEP', `Duplicate step number ${match[1]}`);

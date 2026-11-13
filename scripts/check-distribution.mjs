@@ -40,7 +40,7 @@ try {
   const packed = JSON.parse(runNpm(['pack', '--json', '--ignore-scripts', '--pack-destination', temp]));
   assert.equal(packed.length, 1, 'npm pack should create exactly one tarball');
   const items = packed[0].files.map(f => f.path);
-  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/cli.md', 'src/engine.js', 'src/cache.js', 'src/command.js', 'src/config.js', 'src/show.js', 'src/outputs.js', 'examples/content-generation/awe.json']) {
+  for (const expected of ['package.json', 'bin/awe.js', 'src/runtime.js', 'README.md', 'docs/installation.md', 'docs/maintenance.md', 'docs/cli.md', 'src/engine.js', 'src/cache.js', 'src/command.js', 'src/config.js', 'src/show.js', 'src/json-output.js', 'src/outputs.js', 'examples/content-generation/awe.json']) {
     assert.ok(items.includes(expected), `Missing from npm package: ${expected}`);
   }
   const excluded = items.filter(p => /(^|\/)(\.awe|\.git|node_modules|test|fixtures|\.github|scripts|\.agents)(\/|$)/.test(p) || /(^|\/)(\.env|\.npmrc)(\.|$)/.test(p));

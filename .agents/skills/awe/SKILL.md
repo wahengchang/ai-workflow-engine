@@ -29,6 +29,52 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 
 AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a dry run produced content. Do not promise crash-time resume or exactly-once command execution, publication, subjective quality guarantees, or auto-installation of AI dependencies. The v0.1 commands `simulate`, `dev`, `validate`, `plan`, `status`, `inspect` and `explain` no longer exist; each reports its replacement.
 
+## JSON step output
+
+When later steps need fields from an answer, declare `steps.<id>.json` in `awe.json`. `true` accepts any JSON; a schema
+checks its shape before the step succeeds. For three role assignments, merge this into the existing configuration:
+
+```json
+{
+  "steps": {
+    "1.1": {
+      "json": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 3,
+        "items": {
+          "type": "object",
+          "required": ["role", "perspective"],
+          "properties": {
+            "role": { "type": "string" },
+            "perspective": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+1. Tell the producing prompt: "Reply with only the JSON, no code fence, no explanation." The whole stdout must be JSON.
+2. Declare the types and required fields consumers need. Supported keywords are `type`, `minItems`, `maxItems`, `items`,
+   `required`, `properties`, `enum`; unsupported keywords are configuration errors. `required` checks presence; `properties`
+   checks a present field's shape. Include `type` at each level where shape matters. Extra fields are allowed.
+3. Read values with `{{ steps["1.1"].json[0].role }}`. Paths support `.key`, `[0]`, `["key"]`, with no expressions or calls.
+   Strings are inserted as is, numbers and booleans as text, `null` as `null`, and arrays/objects as compact JSON. Missing
+   fields, wrong shapes and out-of-range indexes are errors. Use fixed indexes for the branches declared in `FLOW.json`;
+   JSON arrays do not create branches automatically.
+4. Run `awe check`, then `awe run --dry` to inspect the wiring. These check reference syntax and upstream declarations;
+   they cannot prove that a future model answer will have the expected fields.
+5. On `OUTPUT_NOT_JSON` or `OUTPUT_JSON_INVALID`, inspect `awe show <step>` for the rejected raw answer and
+   `awe show <step> --json` for its error and `rejectedArtifact` path. For loops use the occurrence, e.g. `1.1.1@2`.
+   Fix the prompt or declaration, rerun `awe run <step>` without `--retry`, then use `awe run --cache` to continue.
+   Downstream steps and the join do not run after a rejection; already-started parallel siblings finish independently.
+   A rejection does not roll back command effects. Changing a JSON declaration invalidates that step and its dependents;
+   upgrading from a pre-JSON build reruns cached steps once (`awe was upgraded`).
+
+See [JSON output](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/cli.md#json-output) for the full contract.
+
 ## Maintenance
 
 CLI distribution and Skill distribution have independent installation/update lifecycles. Follow [installation](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/installation.md) and [maintenance](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/maintenance.md) guidance. When modifying AWE CLI commands, update this Skill in the same PR.

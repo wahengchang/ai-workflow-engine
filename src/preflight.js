@@ -22,6 +22,9 @@ export async function validateReferences(entry, tree, sources = new Map()) {
           : '';
         throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} is not guaranteed to be available here (unknown, forward, parallel sibling, or conditional reference)${hint}`);
       }
+      if (reference.field === 'json' && !entry.settings.steps[reference.stepId]?.json) {
+        throw new AweError('MISSING_REFERENCE', `${label}: {{ ${reference.expression} }} reads the JSON output of step ${reference.stepId}, but awe.json does not declare it. Add: "steps": { "${reference.stepId}": { "json": true } }`);
+      }
       if (reference.fileName && !outputs.get(reference.stepId)?.some(output => output.name === reference.fileName)) {
         throw new AweError('MISSING_REFERENCE', `${label}: Step ${reference.stepId} does not declare an output file named "${reference.fileName}" in awe.json`);
       }
