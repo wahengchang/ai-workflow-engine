@@ -48,7 +48,7 @@ export async function loadEntry(target) {
       ? 'ENTRY.md is no longer used and is ignored: awe.json already has "common". Delete the file.'
       : `ENTRY.md is no longer used, so its text is not sent to any step. Add it to awe.json as shown, then delete the file:\n${await commonSnippet(path.join(root, STRAY_FILE))}`);
   }
-  return { root, entryFile: configFile, common: settings.common ?? '', commonLabel: '"common" in awe.json', config, settings };
+  return { root, entryFile: configFile, common: settings.common, commonLabel: '"common" in awe.json', config, settings };
 }
 
 // Walks up from `start` to the nearest folder that holds awe.json, so awe works from any sub-folder of a
