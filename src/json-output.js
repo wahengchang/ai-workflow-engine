@@ -46,6 +46,19 @@ const matchesType = (value, type) => kindOf(value) === type || (type === 'number
 const at = path => path.join('') || '$';
 const preview = value => { const text = JSON.stringify(value); return text.length > 40 ? `${text.slice(0, 37)}...` : text; };
 
+// JSON objects are unordered; arrays retain their order. Compare values, not their serialization.
+function sameJson(left, right) {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((value, index) => sameJson(value, right[index]));
+  }
+  if (isPlainObject(left) && isPlainObject(right)) {
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameJson(left[key], right[key]));
+  }
+  return false;
+}
+
 // Returns a list of readable problems (empty when the value fits), e.g. `$[1].perspective is required`.
 export function jsonProblems(value, schema, path = ['$']) {
   const problems = [];
@@ -54,7 +67,7 @@ export function jsonProblems(value, schema, path = ['$']) {
     const types = Array.isArray(schema.type) ? schema.type : [schema.type];
     if (!types.some(type => matchesType(value, type))) problems.push(`${here} must be ${types.join(' or ')}, got ${kindOf(value)}`);
   }
-  if (schema.enum !== undefined && !schema.enum.some(option => JSON.stringify(option) === JSON.stringify(value))) {
+  if (schema.enum !== undefined && !schema.enum.some(option => sameJson(option, value))) {
     problems.push(`${here} must be one of ${schema.enum.map(preview).join(', ')}, got ${preview(value)}`);
   }
   if (Array.isArray(value)) {

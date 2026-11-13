@@ -77,6 +77,20 @@ test('jsonProblems: every violation is named with its path', () => {
   assert.throws(() => readJsonOutput(JSON.stringify(many), { type: 'array', items: { required: ['x'] } }, '1.1'), /\(4 more\)/);
 });
 
+test('enum compares JSON values structurally, regardless of object key order', () => {
+  const schema = { enum: [{ role: 'QA', details: { active: true, ranks: [1, null] } }] };
+  assert.deepEqual(jsonProblems({ details: { ranks: [1, null], active: true }, role: 'QA' }, schema), []);
+  for (const value of [
+    { role: 'QA', details: { active: true, ranks: [null, 1] } },
+    { role: 'QA', details: { active: true, ranks: [1, null] }, extra: true },
+    { role: 'QA' },
+    null,
+    [],
+  ]) assert.equal(jsonProblems(value, schema).length, 1, JSON.stringify(value));
+  assert.deepEqual(jsonProblems(-0, { enum: [0] }), []);
+  assert.deepEqual(jsonProblems([1, { b: 2, a: 3 }], { enum: [[1, { a: 3, b: 2 }]] }), []);
+});
+
 // ── template ────────────────────────────────────────────────────────────────
 test('templates read JSON by key and index, and nothing else', () => {
   const data = [{ role: 'PM', n: 3, ok: false, none: null, nest: { x: 1 }, 'odd key': 'v' }, 'second'];
@@ -92,7 +106,7 @@ test('templates read JSON by key and index, and nothing else', () => {
   assert.equal(out('{{ steps["1.1"].json }}'), JSON.stringify(data), 'the whole value too');
   assert.equal(out('{{ steps["1.1"].output }}|{{ steps["1.1"].artifact }}'), 'raw text|/a/1-1.md', '.output and .artifact keep their meaning');
   const fails = (source, pattern) => assert.throws(() => out(source), error => error.code === 'MISSING_REFERENCE' && pattern.test(error.message), source);
-  fails('{{ steps["1.1"].json[0].none }}', /Missing template value: steps\["1\.1"\]\.json\[0\]\.none$/);
+  assert.equal(out('{{ steps["1.1"].json[0].none }}'), 'null');
   fails('{{ steps["1.1"].json[0].perspective }}', /There is no "perspective" at json\[0\] \(it has: role, n, ok, none, nest, odd key\)/);
   fails('{{ steps["1.1"].json[2] }}', /Index 2 is out of range at json: the array has 2 items/);
   fails('{{ steps["1.1"].json.role }}', /is not an object at json; it is an array/);
@@ -107,6 +121,29 @@ test('templates read JSON by key and index, and nothing else', () => {
     assert.throws(() => renderTemplate(bad, context), { code: 'INVALID_TEMPLATE' }, bad);
   }
   assert.deepEqual(templateReferences('{{ steps["1.1"].json[0].role }}')[0].jsonPath, [{ index: 0 }, { key: 'role' }]);
+});
+
+test('own JSON keys named __proto__ and constructor are plain data; inherited keys stay inaccessible', () => {
+  const context = { steps: { '1.1': { json: JSON.parse('{"__proto__":{"role":"QA"},"constructor":"label"}') } } };
+  assert.equal(renderTemplate('{{ steps["1.1"].json.__proto__.role }}', context), 'QA');
+  assert.equal(renderTemplate('{{ steps["1.1"].json.constructor }}', context), 'label');
+  assert.throws(() => renderTemplate('{{ steps["1.1"].json.toString }}', context), { code: 'MISSING_REFERENCE' });
+  assert.equal(Object.hasOwn(Object.prototype, 'role'), false);
+});
+
+test('JSON null can be read as a whole value, a field and an IF gate, including from cache', async t => {
+  const ws = await workspace(t, {
+    '1.1-null.md': 'OUTPUT::null',
+    '1.2-object.md': 'OUTPUT::{"value":null}',
+    '1.3-route/FLOW.json': flow({ type: 'if', test: '{{ steps["1.1"].json }}', equals: 'null', then: 'yes', else: 'no' }),
+    '1.3-route/yes/1.3.1-use.md': 'Whole {{ steps["1.1"].json }} / field {{ steps["1.2"].json.value }}\nOUTPUT::done',
+    '1.3-route/no/1.3.2-other.md': 'OUTPUT::wrong branch',
+  }, { steps: { '1.1': { json: { type: 'null' } }, '1.2': { json: true } } });
+  assert.equal((await run(ws)).status, 'COMPLETED');
+  const cached = await run(ws, ['1.3.1']);
+  assert.equal(cached.status, 'COMPLETED', JSON.stringify(cached.error));
+  assert.equal(cached.reused, 2);
+  assert.equal((await calls(ws.log)).filter(call => call.step === '1.3.1').at(-1).prompt, 'Whole null / field null\nOUTPUT::done');
 });
 
 test('--dry shows where a JSON value would come from', async t => {
@@ -166,6 +203,54 @@ test('a rejected output is a known failure: it never needs --retry, and the next
   await put(ws.dir, '1.1-roles.md', `OUTPUT::${THREE}`);
   const fixed = await run(ws);
   assert.equal(fixed.status, 'COMPLETED', JSON.stringify(fixed.error));
+});
+
+test('show reads the latest rejected JSON output and metadata instead of an older success', async t => {
+  const ws = await workspace(t, { '1.1-json.md': 'OUTPUT::{}' }, { steps: { '1.1': { json: { type: 'object' } } } });
+  const success = await run(ws);
+  await put(ws.dir, '1.1-json.md', 'OUTPUT::not JSON');
+  const rejected = await run(ws);
+  assert.equal(rejected.error.code, 'OUTPUT_NOT_JSON');
+  assert.equal((await cli(['show', ws.dir, '1.1'], ws.dir)).output, 'not JSON');
+  const record = JSON.parse((await cli(['show', ws.dir, '1.1', '--json'], ws.dir)).output);
+  assert.equal(record.status, 'FAILED');
+  assert.equal(record.rejectedArtifact, rejected.steps['1.1'].rejectedArtifact);
+  assert.equal(record.run, rejected.runId);
+  assert.equal((await cli(['show', ws.dir, '1.1', '--run', success.runId], ws.dir)).output, '{}');
+  assert.equal((await cli(['show', ws.dir, '1.1', '--prompt'], ws.dir)).output, 'OUTPUT::not JSON');
+});
+
+test('show reads rejected JSON for a LOOP occurrence', async t => {
+  const ws = await workspace(t, {
+    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 2 }),
+    '1.1-loop/1.1.1-json.md': 'OUTPUT::wrong',
+    '1.1-loop/1.1.2-check.md': 'OUTPUT::PASS',
+  }, { steps: { '1.1.1': { json: true } } });
+  const state = await run(ws);
+  assert.equal(state.error.code, 'OUTPUT_NOT_JSON');
+  assert.equal((await cli(['show', ws.dir, '1.1.1@1'], ws.dir)).output, 'wrong');
+  const record = JSON.parse((await cli(['show', ws.dir, '1.1.1@1', '--json'], ws.dir)).output);
+  assert.equal(record.status, 'FAILED');
+  assert.equal(record.rejectedArtifact, state.steps['1.1.1'].rejectedArtifact);
+});
+
+test('a JSON failure blocks its branch and the join, while successful parallel siblings remain reusable', async t => {
+  const ws = await workspace(t, {
+    '1.1-fan/FLOW.json': flow({ type: 'parallel' }),
+    '1.1-fan/1.1.1-bad/1.1.1.1-json.md': 'OUTPUT::wrong',
+    '1.1-fan/1.1.1-bad/1.1.1.2-after.md': 'OUTPUT::after JSON',
+    '1.1-fan/1.1.2-good.md': 'OUTPUT::sibling',
+    '1.2-join.md': 'OUTPUT::joined',
+  }, { steps: { '1.1.1.1': { json: true } } });
+  const failed = await run(ws);
+  assert.equal(failed.error.code, 'OUTPUT_NOT_JSON');
+  assert.deepEqual(await countByStep(ws.log), { '1.1.1.1': 1, '1.1.2': 1 });
+  assert.equal(failed.steps['1.1.2'].status, 'COMPLETED');
+  await put(ws.dir, '1.1-fan/1.1.1-bad/1.1.1.1-json.md', 'OUTPUT::{}');
+  const fixed = await run(ws, ['--cache']);
+  assert.equal(fixed.status, 'COMPLETED', JSON.stringify(fixed.error));
+  assert.ok(fixed.steps['1.1.2'].reused);
+  assert.deepEqual(await countByStep(ws.log), { '1.1.1.1': 2, '1.1.1.2': 1, '1.1.2': 1, '1.2': 1 });
 });
 
 // ── check ───────────────────────────────────────────────────────────────────

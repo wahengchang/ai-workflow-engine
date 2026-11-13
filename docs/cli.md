@@ -139,7 +139,7 @@ Whatever the mode, every run stores its results, so a later `awe run 1.3` can us
 A stored result is reused only if all of this still holds:
 
 - the step's fingerprint is unchanged: its prompt file, the common text, inputs (`awe.json` plus `--var`), its command line
-  (every argument: another `--model` is another result; timeouts are ignored), declared output files, its position
+  (every argument: another `--model` is another result; timeouts are ignored), declared output files, its JSON declaration, its position
   in the workflow (including the IF branch and LOOP iteration), and **the exact results it could see from earlier steps**;
 - the stored output and every saved output file still exist and match the recorded size and SHA-256.
 
@@ -147,6 +147,7 @@ A stored result is reused only if all of this still holds:
 | --- | --- |
 | a step's prompt | that step and everything after it in order run again; earlier steps are kept |
 | the common text | the steps that write `{{ common }}` are stale; the others are kept |
+| a step's JSON declaration | that step and everything that could see its result run again |
 | an input (`--var`, `awe.json`) | everything is stale, and the old results are kept under the old input |
 | rerun a step (`awe run 1.2`) | everything that could see its result is stale, **even if the new output is identical** |
 | a stored file or artifact | `CACHE_INVALID` is recorded; that step and its dependents run again |
@@ -328,14 +329,21 @@ can read parts of it, and a bad answer stops the workflow where it happened. Dec
         "type": "array",
         "minItems": 3,
         "maxItems": 3,
-        "items": { "type": "object", "required": ["role", "perspective"] }
+        "items": {
+          "type": "object",
+          "required": ["role", "perspective"],
+          "properties": {
+            "role": { "type": "string" },
+            "perspective": { "type": "string" }
+          }
+        }
       }
     }
   }
 }
 ```
 
-`"json": true` means "any valid JSON". Later prompts read it by key and index:
+`"json": true` means "any valid JSON". Omit `json` or set it to `false` to disable validation. Later prompts read it by key and index:
 
 ```md
 Role: {{ steps["1.1"].json[0].role }}
@@ -346,8 +354,9 @@ With three parallel steps `1.2.1`, `1.2.2`, `1.2.3` reading `[0]`, `[1]` and `[2
 else changes: `{{ steps["1.1"].output }}` is still the raw text and `{{ steps["1.1"].artifact }}` the saved file.
 
 **Reading values.** A path is `.key`, `[0]` or `["key with spaces"]`, one after another. A string is inserted as it is, a number
-or boolean as its text, an object or array as compact JSON (so `{{ steps["1.1"].json }}` is the whole value). There is no
-arithmetic, no calls and no other syntax: a template cannot run code, and `__proto__` or `constructor` are not reachable. A
+or boolean as its text, `null` as the literal text `null`, and an object or array as compact JSON (so `{{ steps["1.1"].json }}` is the whole value). There is no
+arithmetic, no calls and no other syntax: a template cannot run code or read inherited properties. Own JSON keys named
+`__proto__` or `constructor` are plain data and can be read like any other key. A
 missing key or an index past the end is an error that names the place: `There is no "perspective" at json[1] (it has: role)`,
 `Index 2 is out of range at json: the array has 2 items`. The same paths work in `FLOW.json` gates:
 `"test": "{{ steps[\"2.1\"].json.verdict }}"`.
@@ -364,14 +373,24 @@ silently ignored:
 | `type` | `object`, `array`, `string`, `number`, `integer`, `boolean`, `null` (or a list of them) |
 | `minItems`, `maxItems` | array length; both `3` means exactly three |
 | `items` | a declaration every array item must satisfy |
-| `required` | field names an object must have |
+| `required` | field names an object must have; use `properties` to also check their types |
 | `properties` | declarations for named fields, applied when the field is present |
-| `enum` | the allowed values |
+| `enum` | the allowed JSON values; object key order does not matter, array order does |
+
+Array keywords apply only to arrays; `required` and `properties` apply only to objects. Include `type` to reject the
+wrong shape. Fields not listed in `properties` are allowed; this subset has no `additionalProperties` keyword.
 
 A violation (`OUTPUT_JSON_INVALID`) lists what is wrong, with paths, for example `$ must have exactly 3 items, got 2` or
-`$[1].perspective is required`. Either way the step fails, **no later step starts** (a parallel group after it never forks),
-and the model's raw output stays saved, so the failure shows where: `The model's raw output is saved in .awe/runs/…`. It is a
-known failure, not an unknown outcome: fix the prompt or the declaration and run the step again, no `--retry` needed.
+`$[1].perspective is required`. Either way the step fails and **its downstream steps do not start** (a parallel group after it
+never forks). If the step is inside an already-started parallel group, siblings finish independently and successful sibling
+results remain cached; the failing branch stops and the join does not run.
+
+The model's raw output stays saved, so the failure shows where: `The model's raw output is saved in .awe/runs/…`.
+`awe show 1.1` prints the latest raw answer, including a rejected one; `awe show 1.1 --json` includes its error and
+`rejectedArtifact` path. Use `--run <id>` to inspect an older answer, or an occurrence such as `1.1.1@2` for a loop.
+This is a known failure: inspect the answer, fix the prompt or declaration, and run `awe run 1.1` again without `--retry`.
+That command stops after the named step; `awe run --cache` then continues the workflow using valid cached results.
+JSON rejection does not undo any files or other effects produced by the command.
 
 **Checks.** `awe check` verifies the syntax of every JSON reference and that the step it reads is declared (and runs earlier),
 but not the data, which does not exist yet; that is checked when the step runs. `awe run --dry` shows
@@ -380,6 +399,9 @@ but not the data, which does not exist yet; that is checked when the step runs. 
 **Cache.** The declaration is part of the step's fingerprint: changing or removing it reruns the step (and so the steps that
 read it) and says `(its JSON declaration changed)`. A cached JSON step is parsed again when it is reused, so later steps still read
 it, and a stored output that no longer fits its declaration is rerun instead of reused.
+
+Upgrading from a build before JSON output invalidates existing step fingerprints once (`awe was upgraded`); the next
+cached run executes those steps again. Existing `awe.json` files and raw artifacts remain readable.
 
 **Limits.** The number of parallel branches is still written in `FLOW.json`: this reads values out of one answer, it does not
 create a branch per array item (a dynamic `foreach` would be a separate feature).

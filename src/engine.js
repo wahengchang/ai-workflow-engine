@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { AweError, assertAwe } from './errors.js';
 import { flatten } from './discover.js';
 import { renderTemplate, templateReferences, validateTemplate } from './template.js';
-import { parseJsonOutput, readJsonOutput } from './json-output.js';
+import { readJsonOutput } from './json-output.js';
 import { executePrompt, needsPromptFile } from './executor.js';
 import { RunStore } from './storage.js';
 import { buildPrompt, gateValue } from './runtime.js';
@@ -480,7 +480,8 @@ async function walkPrompt(node, context, sh, scope) {
     const artifact = await sh.store.artifact(id, attempt, output, { exclusive: true });
     await hook(sh, 'afterArtifact', { address });
     // A declared JSON output is parsed and checked before the step can succeed, so a bad answer stops here and
-    // no later step (or parallel branch) starts. The raw text is already saved, for `show --json` and debugging.
+    // downstream steps do not start. Already-started parallel siblings finish independently.
+    // The raw text is already saved, for `show` and debugging.
     let json;
     if (jsonDecl) {
       rejectedArtifact = artifact;

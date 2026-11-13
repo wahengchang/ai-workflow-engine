@@ -111,6 +111,7 @@ export function renderTemplate(source, context, label) {
       if (step === undefined) throw new AweError('MISSING_REFERENCE', `Missing template value: ${part.expression}`);
       if (!('json' in step)) throw new AweError('MISSING_REFERENCE', `Missing template value: ${part.expression}. Step ${part.stepId} has no JSON output; declare it in awe.json: "steps": { "${part.stepId}": { "json": true } }`);
       value = jsonValue(step.json, part, `The JSON output of step ${part.stepId}`);
+      if (value === null) return 'null';
     } else {
       value = part.isCommon ? context.common
         : part.inputKey ? context.input?.[part.inputKey]

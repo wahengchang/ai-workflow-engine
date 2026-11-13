@@ -112,10 +112,10 @@ Research the topic: {{ input.topic }}
 Use the prior result: {{ steps["1.1"].output }}
 Or reference its file: {{ steps["1.1"].artifact }}
 Or a declared output file: {{ steps["1.1"].files["report"] }}
-Or a part of a JSON answer: {{ steps["1.1"].json[0].role }}   (the step declares it in awe.json: "steps": { "1.1": { "json": true } })
+Or a part of a JSON answer: {{ steps["1.1"].json[0].role }}
 ```
 
-A step can declare that its answer is JSON (`"steps": { "1.1": { "json": { "type": "array", "minItems": 3, "maxItems": 3 } } }`). awe parses and checks it before the step counts as done (a code fence or extra text is an error, and no later step starts), and later prompts read it with `{{ steps["1.1"].json[0].role }}`. See [JSON output](docs/cli.md#json-output).
+A step can declare that its answer is JSON (`"steps": { "1.1": { "json": { "type": "array", "minItems": 3, "maxItems": 3 } } }`). Ask for JSON alone in its prompt. awe parses and checks the answer before the step counts as done (a code fence or extra text is an error, and downstream steps do not start). Later prompts read it with `{{ steps["1.1"].json[0].role }}`; `null` renders as `null`. Inspect a rejected answer with `awe show 1.1`, fix it, then rerun the step without `--retry`. See [JSON output](docs/cli.md#json-output) for typed declarations, parallel failure behavior and cache upgrade notes.
 
 `awe.json` provides defaults and `--var key=value` overrides them for one run. Run state and step outputs are stored in `.awe/runs/<run-id>/` (gitignored), and valid results are cached in `.awe/cache/`. No implicit cross-step model memory; state moves through declared values and artifact paths.
 

@@ -25,10 +25,55 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 - `"common"` in `awe.json` (a string, or an array of lines) is reusable text that is **not** added automatically: a prompt includes it by writing `{{ common }}` where it wants it, and a step sends exactly its own prompt file, rendered, with no headers. `common` may use `{{ input.* }}` but not step outputs. Each step is its own AI call, so every step that writes `{{ common }}` pays for it; editing it reruns exactly those steps. If several prompts need the same text, put it in `common`; if one does, write it in that prompt; if it changes between runs, use `input`. When adding `common`, also add `{{ common }}` to the prompts that need it (`awe check` says which steps use it, and warns when none does). A step that reruns although the cache is on says why in brackets, e.g. `(the common text changed)`. There is no `ENTRY.md` or `COMMON.md` file any more: a leftover `ENTRY.md` is not used (awe warns), so offer to move its text into `"common"` and add `{{ common }}` to the prompts, then delete it. The command a step runs gets `AWE_STEP`, `AWE_ADDRESS` and `AWE_RUN_ID` in its environment.
 - Advice for building a workflow: run steps one at a time (`awe run 1.1`, read it with `awe show 1.1`, edit, rerun, then `awe run 1.2`), and finish with a whole `awe run`.
 - If AWE reports `UNKNOWN_EFFECT`, an earlier command was interrupted (Ctrl-C, timeout, crash): tell the user what it may have affected and only run the same command again with `--retry <step>` after they agree.
-- A step can declare that its answer is JSON in `awe.json`: `"steps": { "1.1": { "json": true } }`, or with a small schema (`type`, `minItems`, `maxItems`, `items`, `required`, `properties`, `enum`). awe parses it before the step succeeds (the whole output must be JSON: a code fence or surrounding text is `OUTPUT_NOT_JSON`; a mismatch is `OUTPUT_JSON_INVALID`, and no later step starts). Later prompts read it with `{{ steps["1.1"].json[0].role }}` (`.key`, `[0]`, `["key"]`; no code). When you write such a prompt, tell the model to reply with only the JSON. The number of parallel branches is still fixed in `FLOW.json`.
 - Steps may declare named output files (PDF, images) in `awe.json` under `steps.<id>.outputs`; later prompts reference the saved copy as `{{ steps["1.1"].files["name"] }}`. Steps may also set `executor` and `timeout` there. See `docs/cli.md`.
 
 AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a dry run produced content. Do not promise crash-time resume or exactly-once command execution, publication, subjective quality guarantees, or auto-installation of AI dependencies. The v0.1 commands `simulate`, `dev`, `validate`, `plan`, `status`, `inspect` and `explain` no longer exist; each reports its replacement.
+
+## JSON step output
+
+When later steps need fields from an answer, declare `steps.<id>.json` in `awe.json`. `true` accepts any JSON; a schema
+checks its shape before the step succeeds. For three role assignments, merge this into the existing configuration:
+
+```json
+{
+  "steps": {
+    "1.1": {
+      "json": {
+        "type": "array",
+        "minItems": 3,
+        "maxItems": 3,
+        "items": {
+          "type": "object",
+          "required": ["role", "perspective"],
+          "properties": {
+            "role": { "type": "string" },
+            "perspective": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+1. Tell the producing prompt: "Reply with only the JSON, no code fence, no explanation." The whole stdout must be JSON.
+2. Declare the types and required fields consumers need. Supported keywords are `type`, `minItems`, `maxItems`, `items`,
+   `required`, `properties`, `enum`; unsupported keywords are configuration errors. `required` checks presence; `properties`
+   checks a present field's shape. Include `type` at each level where shape matters. Extra fields are allowed.
+3. Read values with `{{ steps["1.1"].json[0].role }}`. Paths support `.key`, `[0]`, `["key"]`, with no expressions or calls.
+   Strings are inserted as is, numbers and booleans as text, `null` as `null`, and arrays/objects as compact JSON. Missing
+   fields, wrong shapes and out-of-range indexes are errors. Use fixed indexes for the branches declared in `FLOW.json`;
+   JSON arrays do not create branches automatically.
+4. Run `awe check`, then `awe run --dry` to inspect the wiring. These check reference syntax and upstream declarations;
+   they cannot prove that a future model answer will have the expected fields.
+5. On `OUTPUT_NOT_JSON` or `OUTPUT_JSON_INVALID`, inspect `awe show <step>` for the rejected raw answer and
+   `awe show <step> --json` for its error and `rejectedArtifact` path. For loops use the occurrence, e.g. `1.1.1@2`.
+   Fix the prompt or declaration, rerun `awe run <step>` without `--retry`, then use `awe run --cache` to continue.
+   Downstream steps and the join do not run after a rejection; already-started parallel siblings finish independently.
+   A rejection does not roll back command effects. Changing a JSON declaration invalidates that step and its dependents;
+   upgrading from a pre-JSON build reruns cached steps once (`awe was upgraded`).
+
+See [JSON output](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/cli.md#json-output) for the full contract.
 
 ## Maintenance
 
