@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile, writeFile, rm } from 'node:fs/promises';
+import { readFile, writeFile, rm, stat, mkdir, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -522,4 +522,124 @@ test('an IF gate can read a field of a JSON step', async t => {
   assert.equal(state.status, 'COMPLETED', JSON.stringify(state.error));
   assert.equal(state.events.find(event => event.type === 'IF_BRANCH').branch, 'yes');
   assert.equal((await calls(ws.log)).find(call => call.step === '1.2.1').prompt, 'Score 9\nOUTPUT::ship');
+});
+
+// ── jsonFile: awe saves the checked JSON as a file ──────────────────────────
+const roleFile = 'output/roles.json';
+const savedRoles = `${JSON.stringify(JSON.parse(THREE), null, 2)}\n`;
+
+test('jsonFile: the checked JSON is saved as a pretty file, and the run says where', async t => {
+  const { files, config } = scenario();
+  const ws = await jsonWorkspace(t, files, { steps: { '1.1': { json: roles, jsonFile: roleFile } } });
+  const out = (await cli(['run', ws.dir], ws.dir)).output;
+  assert.match(out, /^ {2}1\.1 json +ran +\S+ +-> output\/roles\.json$/m);
+  assert.equal(await readFile(path.join(ws.dir, roleFile), 'utf8'), savedRoles);
+  assert.equal(config.steps['1.1'].jsonFile, undefined, 'the scenario itself has no file');
+  const state = JSON.parse((await cli(['run', ws.dir, '--cache', '--json'], ws.dir)).output);
+  assert.equal(state.steps['1.1'].format.file, roleFile);
+  assert.match((await cli(['show', ws.dir, '1.1'], ws.dir)).output, /\n\n── json \(saved: output\/roles\.json\) ──\n\[/);
+  assert.match((await cli(['run', ws.dir, '--cache'], ws.dir)).output, /^ {2}1\.1 json +cached +\d\d:\d\d +-> output\/roles\.json$/m);
+});
+
+test('jsonFile: only checked JSON is ever written; a rejected answer leaves the file as it was', async t => {
+  const { files } = scenario();
+  const ws = await jsonWorkspace(t, files, { steps: { '1.1': { json: roles, jsonFile: roleFile } } });
+  assert.equal((await run(ws)).status, 'COMPLETED');
+  await put(ws.dir, 'formatter.fail', 'x');
+  assert.equal((await run(ws)).error.code, 'OUTPUT_NOT_JSON');
+  assert.equal(await readFile(path.join(ws.dir, roleFile), 'utf8'), savedRoles, 'the earlier valid result is still there, not garbage');
+  const fresh = await jsonWorkspace(t, files, { steps: { '1.1': { json: roles, jsonFile: roleFile } } });
+  await put(fresh.dir, 'formatter.fail', 'x');
+  assert.equal((await run(fresh)).error.code, 'OUTPUT_NOT_JSON');
+  await assert.rejects(readFile(path.join(fresh.dir, roleFile)), { code: 'ENOENT' }, 'and a failed first run creates nothing');
+});
+
+test('jsonFile: a cached run restores a deleted or edited file, and leaves a correct one alone', async t => {
+  const { files } = scenario();
+  const ws = await jsonWorkspace(t, files, { steps: { '1.1': { json: roles, jsonFile: roleFile } } });
+  await run(ws);
+  const target = path.join(ws.dir, roleFile);
+  const before = (await stat(target)).mtimeMs;
+  await run(ws, ['--cache']);
+  assert.equal((await stat(target)).mtimeMs, before, 'identical content is not rewritten');
+  await writeFile(target, '[]');
+  await run(ws, ['--cache']);
+  assert.equal(await readFile(target, 'utf8'), savedRoles, 'an edited file is put back');
+  await rm(target);
+  await run(ws, ['--cache']);
+  assert.equal(await readFile(target, 'utf8'), savedRoles, 'a deleted file is recreated');
+  assert.equal((await calls(ws.flog)).length, 1, 'without asking the formatter again');
+  // Moving the file is not a new answer.
+  await writeConfig(ws, { steps: { '1.1': { json: roles, jsonFile: 'out/moved.json' } } });
+  await run(ws, ['--cache']);
+  assert.equal(await readFile(path.join(ws.dir, 'out/moved.json'), 'utf8'), savedRoles);
+  assert.equal((await calls(ws.flog)).length, 1);
+});
+
+test('jsonFile: the settings are checked before anything runs', async t => {
+  const { files } = scenario();
+  const rejects = async (config, code, pattern) => {
+    const ws = await workspace(t, files, config);
+    await assert.rejects(cli(['check', ws.dir], ws.dir), error => error.code === code && pattern.test(error.message), JSON.stringify(config));
+  };
+  await rejects({ steps: { '1.1': { jsonFile: roleFile } } }, 'INVALID_CONFIG', /steps\["1\.1"\]\.jsonFile needs "json" in the same step/);
+  for (const [bad, pattern] of [['/etc/x.json', /relative/], ['../up.json', /inside the workflow root/], ['.awe/x.json', /\.awe/], ['out/', /not a directory/], ['out/*.json', /wildcard/], ['', /non-empty/], [5, /non-empty string/]]) {
+    await rejects({ steps: { '1.1': { json: true, jsonFile: bad } } }, 'INVALID_CONFIG', pattern);
+  }
+  await rejects({ steps: { '1.1': { json: roles }, '1.2.1': { json: true, jsonFile: 'a.json' }, '1.2.2': { json: true, jsonFile: './a.json' } } }, 'OUTPUT_CONFLICT', /Steps 1\.2\.1 and 1\.2\.2 both write a\.json/);
+  await rejects({ steps: { '1.1': { json: true, jsonFile: 'out/r.json' }, '1.2.1': { outputs: [{ name: 'x', path: 'out/r.json' }] } } }, 'OUTPUT_CONFLICT', /"jsonFile" of step 1\.1 \(out\/r\.json\) is the same location as output "x" of step 1\.2\.1/);
+  // the natural mistake: "file" inside "json"
+  await rejects({ steps: { '1.1': { json: { type: 'array', file: roleFile } } } }, 'INVALID_CONFIG', /unsupported key "file"\. Supported: .*\. To save the JSON as a file, write "jsonFile": "output\/name\.json" next to "json" in the same step, not inside it\./);
+  const ok = await jsonWorkspace(t, files, { steps: { '1.1': { json: true, jsonFile: roleFile } } });
+  assert.match((await cli(['check', ok.dir], ok.dir)).output, /^JSON file {2}step 1\.1 saves its JSON to output\/roles\.json$/m);
+  assert.deepEqual(JSON.parse((await cli(['check', ok.dir, '--json'], ok.dir)).output).jsonFiles, { '1.1': roleFile });
+});
+
+test('jsonFile: a symlink or a directory in the way is refused, and says so', { skip: process.platform === 'win32' && 'symlinks need privileges' }, async t => {
+  const { files } = scenario();
+  const linked = await jsonWorkspace(t, files, { steps: { '1.1': { json: roles, jsonFile: roleFile } } });
+  await mkdir(path.join(linked.dir, 'elsewhere'));
+  await symlink('elsewhere', path.join(linked.dir, 'output'), 'dir');
+  const result = await run(linked);
+  assert.equal(result.error.code, 'OUTPUT_INVALID');
+  assert.match(result.error.message, /"jsonFile" output\/roles\.json goes through a symlink \(output\)/);
+  const dir = await jsonWorkspace(t, files, { steps: { '1.1': { json: roles, jsonFile: roleFile } } });
+  await mkdir(path.join(dir.dir, 'output/roles.json'), { recursive: true });
+  assert.match((await run(dir)).error.message, /"jsonFile" output\/roles\.json is a directory/);
+});
+
+test('a declared output on a step that only answers explains that awe will not create it from the answer', async t => {
+  const ws = await jsonWorkspace(t, { '1.1-a.md': 'OUTPUT::prose' }, { steps: { '1.1': { json: true, outputs: [{ name: 'roles', path: roleFile }] } } });
+  const result = await cli(['run', ws.dir], ws.dir);
+  assert.match(result.output, /did not produce declared output "roles" \(output\/roles\.json\)\. awe does not create a declared output from the answer\. To save this step's JSON as a file, write "jsonFile": "<path>" next to "json" in the same step\./);
+});
+
+test('show --raw and --formatted print one part and nothing else, so they can be piped', async t => {
+  const ws = await jsonWorkspace(t, { '1.1-a.md': 'OUTPUT::Title: The Fox. FORMAT_TO::{"title":"The Fox"}', '1.2-b.md': 'OUTPUT::plain' }, { steps: { '1.1': { json: true } } });
+  await run(ws);
+  assert.equal((await cli(['show', ws.dir, '1.1', '--formatted'], ws.dir)).output, '{"title":"The Fox"}');
+  assert.equal((await cli(['show', ws.dir, '1.1', '--raw'], ws.dir)).output, 'Title: The Fox. FORMAT_TO::{"title":"The Fox"}');
+  assert.equal((await cli(['show', ws.dir, '1.2', '--raw'], ws.dir)).output, 'plain');
+  await assert.rejects(cli(['show', ws.dir, '1.2', '--formatted'], ws.dir), { code: 'NO_JSON_OUTPUT', message: /Step 1\.2 declares no "json", so it has nothing formatted/ });
+  for (const args of [['--raw', '--formatted'], ['--formatted', '--prompt'], ['--raw', '--json']]) {
+    await assert.rejects(cli(['show', ws.dir, '1.1', ...args], ws.dir), { code: 'CLI_USAGE', message: /each show something different/ }, args.join(' '));
+  }
+  await assert.rejects(cli(['show', ws.dir, '--formatted'], ws.dir), { code: 'CLI_USAGE', message: /--formatted needs a step/ });
+  await put(ws.dir, 'formatter.fail', 'x');
+  await put(ws.dir, '1.1-a.md', 'OUTPUT::second');
+  await run(ws);
+  await assert.rejects(cli(['show', ws.dir, '1.1', '--formatted'], ws.dir), { code: 'NO_JSON_OUTPUT', message: /The formatter of step 1\.1 has no result \(failed: .*not valid JSON/ });
+  assert.equal((await cli(['show', ws.dir, '1.1', '--raw'], ws.dir)).output, 'second');
+});
+
+test('a step can use its own formatter command (steps.<id>.formatter), and the other steps keep the top-level one', async t => {
+  const second = path.join(os.tmpdir(), `awe-formatter2-${randomUUID()}.jsonl`);
+  t.after(() => rm(second, { force: true }));
+  const ws = await jsonWorkspace(t, { '1.1-a.md': 'OUTPUT::{"a":1}', '1.2-b.md': 'OUTPUT::{"b":2}' }, {
+    steps: { '1.1': { json: true }, '1.2': { json: true, formatter: formatterCommand(second) } },
+  });
+  const state = await run(ws);
+  assert.equal(state.status, 'COMPLETED', JSON.stringify(state.error));
+  assert.deepEqual((await calls(ws.flog)).map(call => call.step), ['1.1'], 'the top-level formatter served only 1.1');
+  assert.deepEqual((await calls(second)).map(call => call.step), ['1.2'], 'and 1.2 used its own');
 });

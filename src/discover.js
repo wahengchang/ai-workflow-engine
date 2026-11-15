@@ -72,6 +72,7 @@ export function outputLocations(config) {
     for (const item of Array.isArray(spec?.outputs) ? spec.outputs : []) {
       if (typeof item?.path === 'string') declared.push(path.posix.normalize(item.path));
     }
+    if (typeof spec?.jsonFile === 'string') declared.push(path.posix.normalize(spec.jsonFile));
   }
   return declared;
 }

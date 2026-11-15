@@ -1,6 +1,7 @@
 import { createReadStream, createWriteStream } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { mkdir, realpath, stat, unlink } from 'node:fs/promises';
+import { lstat, mkdir, readFile, realpath, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import path from 'node:path';
 import { AweError, assertAwe } from './errors.js';
@@ -11,7 +12,7 @@ import { hashFile } from './digest.js';
 // Only named regular files are supported (no directories or globs).
 const NAME = /^[A-Za-z][\w-]*$/;
 
-function normalizePath(value, where) {
+export function normalizePath(value, where) {
   const bad = reason => new AweError('INVALID_CONFIG', `awe.json ${where}: output path ${JSON.stringify(value)} ${reason}`);
   if (typeof value !== 'string' || value.length === 0) throw bad('must be a non-empty string');
   if (value.includes('\0') || value.includes('\\')) throw bad('must use forward slashes and no control characters');
@@ -34,7 +35,7 @@ export function declaredOutputs(config, tree) {
     const where = `steps["${id}"]`;
     assertAwe(promptIds.has(id), 'INVALID_CONFIG', `awe.json ${where} does not match a prompt step`);
     assertAwe(spec && typeof spec === 'object' && !Array.isArray(spec), 'INVALID_CONFIG', `awe.json ${where} must be an object`);
-    for (const key of Object.keys(spec)) assertAwe(['outputs', 'executor', 'timeout', 'json'].includes(key), 'INVALID_CONFIG', `awe.json ${where} has unsupported key "${key}". Supported: outputs, executor, timeout, json`);
+    for (const key of Object.keys(spec)) assertAwe(['outputs', 'executor', 'timeout', 'json', 'jsonFile', 'formatter'].includes(key), 'INVALID_CONFIG', `awe.json ${where} has unsupported key "${key}". Supported: outputs, executor, timeout, json, jsonFile, formatter`);
     if (spec.outputs === undefined) continue;
     assertAwe(Array.isArray(spec.outputs) && spec.outputs.length > 0, 'INVALID_CONFIG', `awe.json ${where}.outputs must be a non-empty array`);
     const names = new Set();
@@ -57,7 +58,7 @@ export function declaredOutputs(config, tree) {
   return outputs;
 }
 
-const overlaps = (a, b) => {
+export const overlaps = (a, b) => {
   const left = a.toLowerCase();
   const right = b.toLowerCase();
   return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
@@ -198,4 +199,52 @@ export async function verifyStoredFile(file, expected) {
   if (!info.isFile()) return 'not a regular file';
   if (info.size !== expected.size) return 'size mismatch';
   return (await hashFile(file)).sha256 === expected.sha256 ? null : 'digest mismatch';
+}
+
+// ── jsonFile ────────────────────────────────────────────────────────────────
+// steps.<id>.jsonFile: where awe saves the validated JSON of a step that declares "json". Unlike a declared
+// output (a file the step's own command writes), awe writes this one, from the checked JSON, so it can never
+// hold anything the declaration would have rejected.
+export function jsonFiles(settings) {
+  return new Map(Object.entries(settings.steps ?? {}).filter(([, step]) => step.jsonFile).map(([id, step]) => [id, step.jsonFile]));
+}
+
+// One owner per file: two steps (or a step and a declared output) naming the same location is a mistake.
+export function assertJsonFileConflicts(settings, outputs) {
+  const claimed = [];
+  for (const [id, file] of jsonFiles(settings)) {
+    for (const other of claimed) {
+      if (overlaps(file, other.path)) throw new AweError('OUTPUT_CONFLICT', `Steps ${other.step} and ${id} both write ${file === other.path ? file : `${other.path} / ${file}`}; give each step its own "jsonFile"`);
+    }
+    for (const [step, decls] of outputs ?? []) {
+      for (const decl of decls) {
+        if (overlaps(file, decl.path)) throw new AweError('OUTPUT_CONFLICT', `"jsonFile" of step ${id} (${file}) is the same location as output "${decl.name}" of step ${step} (${decl.path}); use different paths`);
+      }
+    }
+    claimed.push({ step: id, path: file });
+  }
+}
+
+// Writes the JSON as a file inside the workflow: pretty-printed, replaced atomically, and left alone when it is
+// already exactly this (so a cached run does not touch it). No part of the path may be a symlink.
+export async function writeJsonFile(root, relative, json) {
+  const text = `${JSON.stringify(json, null, 2)}\n`;
+  const realRoot = await realpath(root);
+  const parts = relative.split('/');
+  let walked = realRoot;
+  for (const part of parts) {
+    walked = path.join(walked, part);
+    let info;
+    try { info = await lstat(walked); } catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') break; throw error; }
+    if (info.isSymbolicLink()) throw new AweError('OUTPUT_INVALID', `"jsonFile" ${relative} goes through a symlink (${part}); use the real path`);
+  }
+  const file = path.join(realRoot, ...parts);
+  await mkdir(path.dirname(file), { recursive: true });
+  let current = null;
+  try { current = await readFile(file, 'utf8'); } catch (error) { if (error.code === 'EISDIR') throw new AweError('OUTPUT_INVALID', `"jsonFile" ${relative} is a directory`); if (error.code !== 'ENOENT') throw error; }
+  if (current === text) return { path: relative, written: false };
+  const temp = `${file}.${randomUUID()}.tmp`;
+  await writeFile(temp, text, 'utf8');
+  try { await rename(temp, file); } catch (error) { await unlink(temp).catch(() => {}); throw error; }
+  return { path: relative, written: true };
 }

@@ -21,11 +21,11 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 - `awe run --dry [step]` — print the rendered prompts; calls nothing, writes nothing. Use it to review wiring before spending money. It says nothing about what a model would answer.
 - `awe run [dir] [step]` — run the workflow. **Naming a step** (`awe run 1.2`) runs only that step: earlier steps come from the cache (and run first if missing), later steps are untouched. A whole run (`awe run`) starts from the first step and ignores the cache unless `--cache` is given; `--no-cache` forces everything to rerun. The output states which mode ran and which steps were `cached` or `ran`.
 - `awe run … --var key=value`, `--executor <name>`, `--timeout <seconds>`, `--json` — override an input, use a named executor from `awe.json`, set a per-step time limit, get machine-readable state. Exit codes: 0 ok, 1 a step failed, 2 usage/configuration problem, 129/130/143 interrupted.
-- `awe show [dir] [step]` — latest run summary; `awe show 1.2` prints a step's output, `--prompt` the prompt that was sent, `--err` its last stderr lines. Works from any sub-folder of the workflow.
+- `awe show [dir] [step]` — latest run summary; `awe show 1.2` prints a step's output, `--prompt` the prompt that was sent, `--err` its last stderr lines; for a step that declares JSON, `--raw` prints only its text and `--formatted` only the JSON (use these to pipe or save). Works from any sub-folder of the workflow.
 - `"common"` in `awe.json` (a string, or an array of lines) is reusable text that is **not** added automatically: a prompt includes it by writing `{{ common }}` where it wants it, and a step sends exactly its own prompt file, rendered, with no headers. `common` may use `{{ input.* }}` but not step outputs. Each step is its own AI call, so every step that writes `{{ common }}` pays for it; editing it reruns exactly those steps. If several prompts need the same text, put it in `common`; if one does, write it in that prompt; if it changes between runs, use `input`. When adding `common`, also add `{{ common }}` to the prompts that need it (`awe check` says which steps use it, and warns when none does). A step that reruns although the cache is on says why in brackets, e.g. `(the common text changed)`. There is no `ENTRY.md` or `COMMON.md` file any more: a leftover `ENTRY.md` is not used (awe warns), so offer to move its text into `"common"` and add `{{ common }}` to the prompts, then delete it. The command a step runs gets `AWE_STEP`, `AWE_ADDRESS` and `AWE_RUN_ID` in its environment.
 - Advice for building a workflow: run steps one at a time (`awe run 1.1`, read it with `awe show 1.1`, edit, rerun, then `awe run 1.2`), and finish with a whole `awe run`.
 - If AWE reports `UNKNOWN_EFFECT`, an earlier command was interrupted (Ctrl-C, timeout, crash): tell the user what it may have affected and only run the same command again with `--retry <step>` after they agree.
-- Steps may declare named output files (PDF, images) in `awe.json` under `steps.<id>.outputs`; later prompts reference the saved copy as `{{ steps["1.1"].files["name"] }}`. Steps may also set `executor` and `timeout` there. See `docs/cli.md`.
+- Steps may declare named output files (PDF, images) in `awe.json` under `steps.<id>.outputs`; later prompts reference the saved copy as `{{ steps["1.1"].files["name"] }}`. A declared output is a file the step's **own command writes**; awe never creates one from the step's answer. **To save a JSON answer as a file use `jsonFile` (see below), not a script plus a second step.** Steps may also set `executor` and `timeout` there (`executors` is optional: only for steps that need a different command than `run`). See `docs/cli.md`.
 
 AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a dry run produced content. Do not promise crash-time resume or exactly-once command execution, publication, subjective quality guarantees, or auto-installation of AI dependencies. The v0.1 commands `simulate`, `dev`, `validate`, `plan`, `status`, `inspect` and `explain` no longer exist; each reports its replacement.
 
@@ -60,17 +60,23 @@ existing configuration:
    `run`, and without a `run` the step's own executor). It has `{prompt}`, `{prompt_file}` and stdin like `run`, plus
    `{schema}` (the declaration as JSON text) and `{schema_file}` (a file with it) for a tool's own structured-output flag
    (claude `--json-schema`, codex `--output-schema`; opencode and omp have no such flag, so the built-in prompt does the
-   work). The flags are optional: awe does the checking. The formatter prompt is fixed and cannot be changed. Ask the
-   user which command to use; it costs one more call per declared step.
+   work). The flags are optional: awe does the checking. The formatter prompt is fixed and cannot be changed. **Write
+   `formatter` only when it should differ from `run`; do not repeat the same command.** It costs one more call per
+   declared step.
 2. Declare what consumers need. Supported keywords: `type`, `minItems`, `maxItems`, `items`, `required`, `properties`,
    `additionalProperties`, `enum`, `description` (a hint for the formatter); anything else is a configuration error.
 3. Read values with `{{ steps["1.1"].json.title }}` / `{{ steps["1.1"].json[0].role }}`. Paths support `.key`, `[0]`, `["key"]`,
    with no expressions or calls. Strings are inserted as is, numbers and booleans as text, `null` as `null`, and arrays/objects
    as compact JSON. Missing fields, wrong shapes and out-of-range indexes are errors. `.output` is still the step's own text
    and `.artifact` its file. Use fixed indexes for the branches declared in `FLOW.json`; JSON arrays do not create branches.
-4. Run `awe check` (it also checks the formatter exists), then `awe run --dry` (it shows the formatter prompt as `1.1 json`).
+4. **To save the JSON as a file, write `"jsonFile": "output/roles.json"` next to `"json"` in the same step** (not inside
+   it). awe writes the checked JSON there, pretty-printed, on every run, including cached ones. Do **not** add a script, a
+   second step, an `executors` entry or an `outputs` entry for this. awe checks the shape and item counts *before* the step
+   counts as done, so a script or tool that reads the file need not check them again. Only checked JSON is written; after a
+   rejection the file keeps its earlier content.
+5. Run `awe check` (it lists the JSON files and checks the formatter exists), then `awe run --dry` (it shows the formatter prompt as `1.1 json`).
    These cannot prove that a future model answer will fit the declaration.
-5. `awe run` lists the formatter under its step (`1.1 json`). `awe show 1.1` prints the step's text and the JSON; `--prompt`
+6. `awe run` lists the formatter under its step (`1.1 json`). `awe show 1.1` prints the step's text and the JSON; `--prompt`
    and `--err` print both. On `OUTPUT_NOT_JSON` or `OUTPUT_JSON_INVALID` the formatter's output is saved (the path is in the
    message; `awe show 1.1` shows it as a rejected `json` section), the run stops and no later step starts. The step itself is
    cached, so after fixing the declaration or the formatter command run `awe run --cache`: only the formatter runs again. If

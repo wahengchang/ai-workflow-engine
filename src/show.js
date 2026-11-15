@@ -58,9 +58,9 @@ export function renderSteps(state, root) {
     // A step's formatter is listed right under it: its time, whether it came from the cache, and its own failure.
     const name = (isFormatAddress(item.address) ? `${displayAddress(item.address)} json` : displayAddress(item.address)).padEnd(width);
     if (item.action === 'REUSED') {
-      lines.push(`  ${name} cached   ${clock(item.from?.at ?? '')}`.trimEnd());
+      lines.push(`  ${name} cached   ${clock(item.from?.at ?? '')}${item.file ? `  -> ${item.file}` : ''}`.trimEnd());
     } else if (item.status === 'COMPLETED') {
-      lines.push(`  ${name} ran      ${seconds(item.startedAt, item.finishedAt)}${item.reason ? `  (${item.reason})` : ''}  -> ${rel(item.artifact)}`.trimEnd());
+      lines.push(`  ${name} ran      ${seconds(item.startedAt, item.finishedAt)}${item.reason ? `  (${item.reason})` : ''}  -> ${item.file ?? rel(item.artifact)}`.trimEnd());
     } else if (item.status === 'RUNNING') {
       lines.push(`  ${name} RUNNING`);
     } else {
@@ -129,7 +129,7 @@ const section = (title, text) => `── ${title} ──\n${text}`;
 // then what the formatter made of it (or why there is none).
 async function formatSection(format) {
   if (!format) return null;
-  if (format.status === 'COMPLETED' && format.artifact) return section('json', await readText(format.artifact));
+  if (format.status === 'COMPLETED' && format.artifact) return section(format.file ? `json (saved: ${format.file})` : 'json', await readText(format.artifact));
   if (format.rejectedArtifact) return section(`json (rejected: ${firstLine(format.error?.message ?? '')})`, await readText(format.rejectedArtifact));
   return section('json', `(not available: the formatter ${String(format.status ?? 'did not run').toLowerCase()}${format.error ? `, ${firstLine(format.error.message)}` : ''})`);
 }
@@ -159,7 +159,15 @@ async function occurrenceOf(root, states, step, wanted, need) {
   throw new AweError('STEP_NOT_FOUND', `No recorded occurrence ${wanted}.${known.length ? ` Occurrences seen: ${known.join(', ')}` : ` Step ${step} has no record yet. Next: awe run ${wanted}`}`);
 }
 
-export async function show(root, { step, occurrence, runId, prompt = false, err = false, json = false } = {}) {
+// `awe show 1.1 --raw` / `--formatted`: one part, nothing else, so it can be piped or saved.
+async function onlyPart(only, step, raw, format) {
+  if (only === 'raw') return { output: raw, code: 0 };
+  if (!format) throw new AweError('NO_JSON_OUTPUT', `Step ${step} declares no "json", so it has nothing formatted. \`awe show ${step}\` prints its text.`);
+  if (format.status !== 'COMPLETED' || !format.artifact) throw new AweError('NO_JSON_OUTPUT', `The formatter of step ${step} has no result (${String(format.status ?? 'it did not run').toLowerCase()}${format.error ? `: ${firstLine(format.error.message)}` : ''}). \`awe show ${step}\` shows what it returned.`);
+  return { output: await readText(format.artifact), code: 0 };
+}
+
+export async function show(root, { step, occurrence, runId, prompt = false, err = false, json = false, only } = {}) {
   const states = await runsNewestFirst(root, runId);
   if (!states.length) throw new AweError('RUN_NOT_FOUND', 'Nothing has run yet in this workflow.\nNext: awe run 1.1   (or preview the prompts first: awe run --dry)');
 
@@ -185,6 +193,7 @@ export async function show(root, { step, occurrence, runId, prompt = false, err 
     if (prompt) return { output: format?.prompt ? `${section('prompt', await readText(record.prompt))}\n\n${section('json prompt', await readText(format.prompt))}` : await readText(record.prompt), code: 0 };
     if (err) return { output: format?.stderrTail ? `${section('stderr', record.stderrTail ?? '')}\n\n${section('json stderr', format.stderrTail)}` : record.stderrTail ?? '', code: 0 };
     const raw = await readText(outputArtifact(record));
+    if (only) return onlyPart(only, occurrence, raw, format);
     const formatted = await formatSection(format);
     return { output: formatted ? `${section('output', raw)}\n\n${formatted}` : raw, code: 0 };
   }
@@ -210,6 +219,7 @@ export async function show(root, { step, occurrence, runId, prompt = false, err 
   }
   if (err) return { output: found.format?.stderrTail ? `${section('stderr', found.stderrTail ?? '')}\n\n${section('json stderr', found.format.stderrTail)}` : found.stderrTail ?? '', code: 0 };
   const raw = await readText(outputArtifact(found));
+  if (only) return onlyPart(only, step, raw, found.format);
   const formatted = await formatSection(found.format);
   return { output: formatted ? `${section('output', raw)}\n\n${formatted}` : raw, code: 0 };
 }
