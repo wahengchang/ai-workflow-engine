@@ -49,7 +49,7 @@ export async function validateReferences(entry, tree, sources = new Map()) {
     }
     let result = available;
     for (const child of node.children) result = await visit(child, result);
-    if (node.type === 'loop') check(node.config.until, result, `${node.relative}/FLOW.json (until)`);
+    if (node.type === 'until') check(node.config.test, result, `${node.relative}/FLOW.json (test)`);
     return result;
   }
   // The common text is checked once: whichever step uses it, no step output exists for it to read.

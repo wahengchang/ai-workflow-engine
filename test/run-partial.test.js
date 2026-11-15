@@ -136,9 +136,9 @@ test('IF branch flip: the gate re-evaluates, the other branch runs, the old bran
 // Outer loop (max 3) around: a, an inner loop (max 3) of b + gate g, and the outer gate og.
 // A fresh run produces b#1 (O1,I1), b#2 (O1,I2), b#3 (O2,I1), b#4 (O3,I1).
 const nestedLoop = {
-  '1.1-outer/FLOW.json': flow({ type: 'loop', until: '{{ steps["1.1.3"].output }}', equals: 'PASS', maxIterations: 3 }),
+  '1.1-outer/FLOW.json': flow({ type: 'until', test: '{{ steps["1.1.3"].output }}', equals: 'PASS', maxIterations: 3 }),
   '1.1-outer/1.1.1-a.md': 'OUTPUT::a#{n}',
-  '1.1-outer/1.1.2-inner/FLOW.json': flow({ type: 'loop', until: '{{ steps["1.1.2.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+  '1.1-outer/1.1.2-inner/FLOW.json': flow({ type: 'until', test: '{{ steps["1.1.2.2"].output }}', equals: 'PASS', maxIterations: 3 }),
   '1.1-outer/1.1.2-inner/1.1.2.1-b.md': 'OUTPUT::b#{n}',
   '1.1-outer/1.1.2-inner/1.1.2.2-g.md': 'PASS_IF_NUM_GTE::2::{{ steps["1.1.2.1"].output }}',
   '1.1-outer/1.1.3-og.md': 'PASS_IF_NUM_GTE::4::{{ steps["1.1.2.1"].output }}',
@@ -147,7 +147,7 @@ const nestedLoop = {
 const occurrence = (outer, inner) => `1.1.2.1@1.1-outer=${outer},1.1-outer/1.1.2-inner=${inner}`;
 const iteration = (outer, inner) => `${outer}.${inner}`;
 
-test('nested LOOP: occurrences are addressed separately from attempts', async t => {
+test('nested UNTIL: occurrences are addressed separately from attempts', async t => {
   const ws = await workspace(t, nestedLoop);
   const state = await resume(ws);
   assert.equal(state.status, 'COMPLETED', JSON.stringify(state.error));
@@ -168,7 +168,7 @@ test('nested LOOP: occurrences are addressed separately from attempts', async t 
   assert.equal((await countByStep(ws.log))['1.1.2.1'], 4, 'rejected commands run nothing');
 });
 
-test('nested LOOP: rerunning an occurrence keeps earlier occurrences and retires the later ones', async t => {
+test('nested UNTIL: rerunning an occurrence keeps earlier occurrences and retires the later ones', async t => {
   const ws = await workspace(t, nestedLoop);
   await resume(ws);
   const target = await run(ws, ['1.1.2.1@2.1']);
@@ -189,7 +189,7 @@ test('nested LOOP: rerunning an occurrence keeps earlier occurrences and retires
   assert.equal(rest.steps['1.1.2.1'].reused.runId, target.runId, 'the reused b(O2,I1) is the one executed by the previous command');
 });
 
-test('nested LOOP: retesting the first occurrence shortens the loop; an occurrence that is no longer reached is refused', async t => {
+test('nested UNTIL: retesting the first occurrence shortens the loop; an occurrence that is no longer reached is refused', async t => {
   const ws = await workspace(t, nestedLoop);
   await resume(ws);
   await run(ws, ['1.1.2.1@1.1']);

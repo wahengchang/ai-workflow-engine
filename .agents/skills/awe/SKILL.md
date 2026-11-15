@@ -28,6 +28,7 @@ AWE is the executable workflow interpreter; this Skill is **instructions only** 
 - Steps may declare named output files (PDF, images) in `awe.json` under `steps.<id>.outputs`; later prompts reference the saved copy as `{{ steps["1.1"].files["name"] }}`. Steps may also set `executor` and `timeout` there. See `docs/cli.md`.
 
 AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** interpret `FLOW.json` or reroute steps yourself when AWE is installed. Do not claim a dry run produced content. Do not promise crash-time resume or exactly-once command execution, publication, subjective quality guarantees, or auto-installation of AI dependencies. The v0.1 commands `simulate`, `dev`, `validate`, `plan`, `status`, `inspect` and `explain` no longer exist; each reports its replacement.
+- A folder with `FLOW.json` `{ "type": "until", "test": "{{ steps[\"3.2\"].output }}", "equals": "PASS", "maxIterations": 3 }` repeats the steps inside it until the check step answers exactly `PASS` (at most `maxIterations` rounds, then `UNTIL_EXHAUSTED`). It is for retry/refine, **not** for doing the same thing once per item: a step cannot see which round it is in (no `{{ loop.iteration }}`). For N similar items write N prompts, or one prompt that handles all items in one JSON answer. The old name `"type": "loop"` with `until` is still read but warned about; write `until` with `test`.
 
 ## JSON step output
 

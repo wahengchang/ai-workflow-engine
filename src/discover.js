@@ -27,8 +27,8 @@ function comparePos(a, b) {
 
 function validConfig(flow, relative) {
   assertAwe(flow && typeof flow === 'object' && !Array.isArray(flow), 'INVALID_FLOW', `${relative}/FLOW.json must be an object`);
-  assertAwe(['sequence', 'parallel', 'if', 'loop'].includes(flow.type), 'INVALID_FLOW', `Unknown flow type at ${relative}: ${flow.type}`);
-  if (flow.type === 'if' || flow.type === 'loop') {
+  assertAwe(['sequence', 'parallel', 'if', 'until'].includes(flow.type), 'INVALID_FLOW', `Unknown flow type at ${relative}: ${flow.type}`);
+  if (flow.type === 'if' || flow.type === 'until') {
     assertAwe(flow.match === undefined || ['exact', 'first-line'].includes(flow.match), 'INVALID_FLOW', `Invalid match mode at ${relative}`);
     assertAwe(flow.caseInsensitive === undefined || typeof flow.caseInsensitive === 'boolean', 'INVALID_FLOW', `caseInsensitive must be boolean at ${relative}`);
   }
@@ -36,9 +36,17 @@ function validConfig(flow, relative) {
     assertAwe(flow.elseEquals === undefined || typeof flow.elseEquals === 'string', 'INVALID_FLOW', `elseEquals must be a string at ${relative}`);
     assertAwe(typeof flow.test === 'string' && typeof flow.equals === 'string' && typeof flow.then === 'string' && typeof flow.else === 'string', 'INVALID_FLOW', `IF flow at ${relative} requires test, equals, then and else strings`);
   }
-  if (flow.type === 'loop') {
-    assertAwe(typeof flow.until === 'string' && typeof flow.equals === 'string' && Number.isInteger(flow.maxIterations) && flow.maxIterations >= 1 && flow.maxIterations <= 100, 'INVALID_FLOW', `LOOP at ${relative} requires until, equals and maxIterations (1–100)`);
+  if (flow.type === 'until') {
+    assertAwe(flow.until === undefined, 'INVALID_FLOW', `UNTIL group at ${relative}: the value to check is called "test" (like an IF), not "until": { "type": "until", "test": "{{ steps[\\"3.2\\"].output }}", "equals": "PASS", "maxIterations": 3 }`);
+    assertAwe(typeof flow.test === 'string' && typeof flow.equals === 'string' && Number.isInteger(flow.maxIterations) && flow.maxIterations >= 1 && flow.maxIterations <= 100, 'INVALID_FLOW', `UNTIL group at ${relative} requires test, equals and maxIterations (1–100)`);
   }
+}
+
+// Before v0.3 this group was called "loop" and named its check "until": { "type": "loop", "until": ... }.
+// Read it as the new shape, so an existing workflow keeps running, and report it so it gets rewritten.
+function fromLegacyLoop(flow) {
+  const { until, ...rest } = flow;
+  return { ...rest, type: 'until', test: until };
 }
 
 // Does this folder hold anything that belongs to a workflow: a FLOW.json or a numbered prompt? A folder an
@@ -79,6 +87,7 @@ export function outputLocations(config) {
 export async function discoverWorkflow(root, { outputs = [] } = {}) {
   const seen = new Set();
   const ignoredEntries = [];
+  const legacyLoops = [];
   const rootReal = await realpath(root);
   // `relative` is what people read and what cache addresses and fingerprints are built from, so it always
   // uses "/", never the platform separator (a workflow cached on Windows is the same workflow on Linux).
@@ -90,6 +99,10 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
     if (flowEntry) {
       try { flow = JSON.parse(await readFile(path.join(dir, 'FLOW.json'), 'utf8')); }
       catch (error) { throw new AweError('INVALID_FLOW', `Invalid FLOW.json at ${relative || '.'}: ${error.message}`); }
+      if (flow && flow.type === 'loop') {
+        flow = fromLegacyLoop(flow);
+        legacyLoops.push(path.posix.join(relative, 'FLOW.json'));
+      }
       validConfig(flow, relative || '.');
     }
     const children = [];
@@ -155,6 +168,7 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
   assertAwe(tree.children.length > 0, 'EMPTY_WORKFLOW', 'No numbered steps found in this workflow folder');
   // Only the awe.json at the workflow root is used. Report the others instead of ignoring them silently.
   tree.ignoredEntries = ignoredEntries;
+  tree.legacyLoops = legacyLoops;
   return tree;
 }
 

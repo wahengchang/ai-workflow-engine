@@ -220,7 +220,7 @@ test('removed commands say what replaced them; help is available everywhere', as
   }
 });
 
-test('show follows a reused step to the run that produced it, and resolves LOOP occurrences', async t => {
+test('show follows a reused step to the run that produced it, and resolves UNTIL occurrences', async t => {
   const ws = await workspace(t, steps);
   await cli(['run', ws.dir, '1.1'], ws.dir);
   await cli(['run', ws.dir, '1.2'], ws.dir); // 1.1 is only referenced here
@@ -230,7 +230,7 @@ test('show follows a reused step to the run that produced it, and resolves LOOP 
   assert.ok(json.prompt && json.reused);
 
   const loop = await workspace(t, {
-    '1.1-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'until', test: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
     '1.1-loop/1.1.1-draft.md': 'OUTPUT::draft#{n}',
     '1.1-loop/1.1.2-gate.md': 'PASS_IF_NUM_GTE::3::{{ steps["1.1.1"].output }}',
   });
@@ -269,16 +269,34 @@ test('stderr lines that the failure message does not already quote are printed u
   assert.equal(out.match(/line 1/g).length, 1);
 });
 
+test('an old "type": "loop" with "until" still runs, with a warning; "until" in the new shape says to use "test"', async t => {
+  const old = await workspace(t, {
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/1.1.1-draft.md': 'OUTPUT::draft#{n}',
+    '1.1-loop/1.1.2-gate.md': 'PASS_IF_NUM_GTE::2::{{ steps["1.1.1"].output }}',
+  });
+  const checked = await cli(['check', old.dir], old.dir);
+  assert.equal(checked.warnings.length, 1);
+  assert.match(checked.warnings[0], /1\.1-loop\/FLOW\.json uses the old "type": "loop" with "until"\..*"type": "until".*"test"/);
+  assert.equal((await run(old)).status, 'COMPLETED');
+
+  const mixed = await workspace(t, {
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'until', until: '{{ steps["1.1.1"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/1.1.1-draft.md': 'OUTPUT::PASS',
+  });
+  await assert.rejects(cli(['check', mixed.dir], mixed.dir), { code: 'INVALID_FLOW', message: /UNTIL group at 1\.1-loop: the value to check is called "test"/ });
+});
+
 test('the summary uses one vocabulary: steps in the plan, step runs when a loop repeats', async t => {
   const loop = await workspace(t, {
-    '1.1-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'until', test: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
     '1.1-loop/1.1.1-draft.md': 'OUTPUT::draft#{n}',
     '1.1-loop/1.1.2-gate.md': 'PASS_IF_NUM_GTE::2::{{ steps["1.1.1"].output }}',
     '1.2-after.md': 'OUTPUT::done',
   });
   const out = (await cli(['run', loop.dir], loop.dir)).output;
   assert.match(out, /\(3 steps in plan\)/);
-  assert.match(out, /^Reused 0 step runs · Ran 5 step runs {3}\(a step inside a loop counts once per iteration\)$/m);
+  assert.match(out, /^Reused 0 step runs · Ran 5 step runs {3}\(a step inside an until group counts once per iteration\)$/m);
   const plain = await workspace(t, steps);
   assert.match((await cli(['run', plain.dir], plain.dir)).output, /^Reused 0 steps · Ran 3 steps$/m, 'no loop, no parenthetical');
 });

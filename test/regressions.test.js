@@ -33,7 +33,7 @@ const flow = JSON.stringify;
 
 test('parallel writes replace previous iterations without merging sibling snapshots', async t => {
   const dir = await fixture(t, {
-    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/FLOW.json': flow({ type: 'until', test: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
     '1.1-loop/1.1.1-parallel/FLOW.json': flow({ type: 'parallel' }),
     '1.1-loop/1.1.1-parallel/1.1.1.1-nested/FLOW.json': flow({ type: 'parallel' }),
     '1.1-loop/1.1.1-parallel/1.1.1.1-nested/1.1.1.1.1-a.md': 'DELAY_150 OUTPUT::a',
@@ -112,7 +112,7 @@ test('check and run reject invalid source syntax in the common text, prompts, an
   for (const [files, config] of [
     [{ '1.1-a.md': 'a' }, { common: '{{ audience }}' }],
     [{ '1.1-a.md': 'a', '1.2-b.md': '{{ input.broken' }, {}],
-    [{ '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }), '1.1-loop/1.1.1-a.md': 'a' }, {}],
+    [{ '1.1-loop/FLOW.json': flow({ type: 'until', test: '{{ bad }}', equals: 'PASS', maxIterations: 1 }), '1.1-loop/1.1.1-a.md': 'a' }, {}],
   ]) {
     const dir = await fixture(t, files, config);
     await assert.rejects(cli(['check', dir]), { code: 'INVALID_TEMPLATE' });
@@ -127,10 +127,10 @@ test('template errors name the file or step and line', async t => {
   const entryDir = await fixture(t, { '1.1-a.md': 'a' }, { common: '# x\n{{ name }}' });
   await assert.rejects(cli(['check', entryDir]), { code: 'INVALID_TEMPLATE', message: /"common" in awe\.json: .*line 2/ });
   const flowDir = await fixture(t, {
-    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ bad }}', equals: 'PASS', maxIterations: 1 }),
+    '1.1-loop/FLOW.json': flow({ type: 'until', test: '{{ bad }}', equals: 'PASS', maxIterations: 1 }),
     '1.1-loop/1.1.1-a.md': 'a',
   });
-  await assert.rejects(cli(['check', flowDir]), { code: 'INVALID_TEMPLATE', message: /1\.1-loop\/FLOW\.json \(until\)/ });
+  await assert.rejects(cli(['check', flowDir]), { code: 'INVALID_TEMPLATE', message: /1\.1-loop\/FLOW\.json \(test\)/ });
   const missing = await fixture(t, { '1.1-a.md': '{{ input.nope }}' });
   const result = await run(missing);
   assert.equal(result.error.code, 'MISSING_REFERENCE');
@@ -174,7 +174,7 @@ test('gate normalization is opt-in and strict IF rejects unexpected tokens', asy
     else assert.equal(result.events.find(e => e.type === 'IF_BRANCH').branch, expected);
   }
   const dir = await fixture(t, {
-    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ input.verdict }}', equals: 'PASS', maxIterations: 1, match: 'first-line' }),
+    '1.1-loop/FLOW.json': flow({ type: 'until', test: '{{ input.verdict }}', equals: 'PASS', maxIterations: 1, match: 'first-line' }),
     '1.1-loop/1.1.1-a.md': 'OUTPUT::ok',
   });
   assert.equal((await run(dir, { input: { verdict: '**PASS**\nReason' } })).status, 'COMPLETED');

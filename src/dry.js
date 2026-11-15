@@ -7,7 +7,7 @@ import { buildFormatPrompt } from './json-output.js';
 
 // `awe run --dry`: render prompts without calling anything. Upstream results do not exist, so a
 // reference such as {{ steps["1.1"].output }} renders as "[output of 1.1]". Every IF branch is shown
-// and a LOOP body is shown once. Nothing is written: no run, no cache.
+// and an UNTIL body is shown once. Nothing is written: no run, no cache.
 export async function dryRun(entry, tree, { input = {}, step, sources, outputs = declaredOutputs(entry.config, tree) } = {}) {
   const prompts = flatten(tree).filter(node => node.type === 'prompt');
   if (step !== undefined && !prompts.some(node => node.id === step)) {
