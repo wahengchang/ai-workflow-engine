@@ -143,6 +143,24 @@ A stored result is reused only if all of this still holds:
   in the workflow (including the IF branch and LOOP iteration), and **the exact results it could see from earlier steps**;
 - the stored output and every saved output file still exist and match the recorded size and SHA-256.
 
+```mermaid
+flowchart TD
+    S["Next step, in order"] --> A{"Is the cache being read?<br/>(a named step: on, a whole run: off,<br/>--cache and --no-cache override)"}
+    A -- "no" --> U
+    A -- "yes" --> B{"Is this the step you named?"}
+    B -- "yes: it always runs" --> U
+    B -- "no" --> C{"Same fingerprint as the<br/>stored result?"}
+    C -- "no: something changed" --> U
+    C -- "yes" --> D{"Stored output and files still exist,<br/>same size and SHA-256?"}
+    D -- "no" --> E["CACHE_INVALID recorded"] --> U
+    D -- "yes" --> R["REUSE the stored result<br/>no AI call"]
+    U{"Did its previous attempt<br/>leave an unknown outcome?"}
+    U -- "yes, and no --retry" --> X["STOP: UNKNOWN_EFFECT"]
+    U -- "no, or --retry was given" --> G["RUN the step<br/>later steps that could see it become stale"]
+```
+
+*Figure: the questions awe asks, in order, before it reuses a stored result or runs a step.*
+
 | You change… | Effect |
 | --- | --- |
 | a step's prompt | that step and everything after it in order run again; earlier steps are kept |
@@ -265,6 +283,18 @@ A step receives exactly one thing: its own prompt, with `{{ … }}` filled in (i
 receive earlier steps' prompts or outputs, and the AI keeps no memory between steps. To use an earlier result, name it in
 the step's prompt: `{{ steps["1.1"].output }}` (the text) or `{{ steps["1.1"].artifact }}` (the file path).
 
+```mermaid
+flowchart LR
+    O11["1.1 output<br/>(text or file path)"] -- "steps[#quot;1.1#quot;].output" --> P12
+    IN["awe.json input"] -- "input.topic" --> P12
+    CM["awe.json common text"] -. "only if the prompt writes common" .-> P12
+    P12["1.2-outline.md<br/>your prompt file"] -- "awe fills in the references" --> R["rendered prompt<br/>the ONLY thing sent"]
+    R --> AI["AI command<br/>no memory of other steps"]
+    AI --> O12["1.2 output"]
+```
+
+*Figure: a step receives only its own rendered prompt. Earlier results, `input` and `common` reach it only through the `{{ ... }}` references you write.*
+
 ## Workflow files
 
 Unchanged: numbered `N.N-name.md` prompts, `FLOW.json` for `parallel` / `if` /
@@ -361,6 +391,24 @@ For a step that declares `"json"`, awe runs **one more command call**, right aft
 2. awe runs the **formatter** with a fixed, built-in prompt (the rules, your declaration as a JSON Schema, and the step's text
    between `--- TEXT START ---` / `--- TEXT END ---`). The prompt cannot be changed: one wording means every tool behaves alike;
 3. the formatter's output must be JSON **only** and must fit the declaration. Then the step is done, and `.json` is available.
+
+```mermaid
+sequenceDiagram
+    participant W as awe
+    participant S as step command
+    participant F as formatter command
+    W->>S: rendered prompt (plain prose, never mentions JSON)
+    S-->>W: the step's text (the step is finished and cached)
+    W->>F: built-in prompt + your declaration + the text
+    F-->>W: reply
+    alt JSON only, and it fits the declaration
+        Note over W: the step is done, steps[#quot;1.1#quot;].json is available
+    else not JSON, or it does not fit
+        Note over W: OUTPUT_NOT_JSON / OUTPUT_JSON_INVALID<br/>the run stops, no later step starts<br/>awe run --cache reruns only the formatter
+    end
+```
+
+*Figure: a step with a `json` declaration costs one extra formatter call, and a bad answer stops the run right there.*
 
 `awe run` lists the formatter under its step, so its time, whether it came from the cache, and its own failure are visible:
 
@@ -482,6 +530,19 @@ Writes happen in a fixed order so that a crash can never produce a result that l
 4. The attempt is recorded in the run's `state.json`.
 5. A single atomic file replace commits the result to the cache. Only this makes it reusable.
 
+```mermaid
+flowchart LR
+    subgraph unsafe["steps 1 to 4: a stop here leaves the outcome UNKNOWN"]
+        direction LR
+        I["1. intent saved<br/>old result retired"] --> C["2. command runs"] --> W["3. output and files written"] --> R["4. state.json recorded"]
+    end
+    R --> M["5. atomic commit<br/>the result is now reusable"]
+    C -. "crash, kill or power loss" .-> X["outcome UNKNOWN<br/>next run stops: UNKNOWN_EFFECT"]
+    X --> RT["you check, then:<br/>awe run --cache --retry 1.2"]
+```
+
+*Figure: the write order. A stop anywhere before step 5 can never leave a result that looks valid; it leaves an unknown outcome you resolve with `--retry`.*
+
 One `awe run` uses the cache at a time; a second one fails with `CACHE_BUSY` (the lock of a dead process on the same host
 is taken over automatically).
 
@@ -497,6 +558,32 @@ awe run --cache --retry 1.2
 `--retry` lets that one step run once. A plain non-zero exit is a known failure and needs no `--retry`; a command killed by
 a signal is not (its error says `terminated by signal …`). A run that a crash left unfinished is marked `FAILED`
 (`RUN_ABANDONED`) the next time the cache is opened.
+
+```mermaid
+stateDiagram-v2
+    state "Unknown outcome" as Unknown
+    [*] --> REUSED: stored result is valid
+    [*] --> RUNNING: has to run
+    RUNNING --> COMPLETED: result committed
+    RUNNING --> FAILED: command exits non-zero
+    RUNNING --> Unknown: timeout, signal or Ctrl-C while the command ran
+    FAILED --> RUNNING: awe run again
+    Unknown --> RUNNING: awe run --retry STEP, after you checked
+```
+
+*Figure: the life of one step attempt. A step killed or timed out is saved as `INTERRUPTED` / `FAILED` and marked unknown; awe will not resend it until you pass `--retry`.*
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> RUNNING: awe run starts
+    RUNNING --> COMPLETED: every step finished (exit 0)
+    RUNNING --> FAILED: a step failed (exit 1)
+    RUNNING --> INTERRUPTED: SIGINT, SIGTERM or SIGHUP (exit 130, 143, 129)
+    RUNNING --> FAILED: the process crashed; marked RUN_ABANDONED the next time the cache is opened
+```
+
+*Figure: the status of a whole run, with the exit code `awe run` returns.*
 
 ## What is stored
 
