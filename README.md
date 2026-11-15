@@ -158,4 +158,8 @@ npm run check
 npm run test:distribution
 ```
 
+CI (`.github/workflows/ci.yml`) runs `check` and `test:distribution` once, on Linux with Node 22. It is not a
+platform matrix: run the same two commands on Node 20/24 and on macOS/Windows when a change touches workflow paths,
+cache addresses, child processes or command quoting (see [maintenance](docs/maintenance.md#automated-pr-gate)).
+
 See the [CLI guide](docs/cli.md), [architecture](docs/architecture.md) and [implementation plan](docs/plan.md). Key limitations: no automatic crash-time `resume` (an interrupted command is retried explicitly with `--retry`, never exactly-once), no dynamic `goto`, no arbitrary YAML config, no distributed execution, and no guaranteed subjective review quality in v0.1.

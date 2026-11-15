@@ -25,7 +25,7 @@ Build a reusable, filesystem-first AI workflow interpreter accessed via a CLI na
 - [x] No echo executor: `awe run --dry` previews prompts, a run without a command fails with examples
 - [x] Actionable errors: valid values listed, stderr tail kept, next-command hints, exit code 2 for usage
 - [x] Legacy `executor` block read with a deprecation warning
-- [ ] Verified on the macOS and Windows CI matrix and against real Claude/Codex/OpenCode/omp installs
+- [ ] Verified on macOS and Windows by hand (the PR gate is Linux only) and against real Claude/Codex/OpenCode/omp installs
 
 ## Milestone 1 — Operational reliability
 
