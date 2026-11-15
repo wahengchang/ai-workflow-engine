@@ -199,6 +199,8 @@ async function runInSession(entry, tree, { options, outputs, info, targetNode, i
     commonDigest: sha256(entry.common ?? ''),
     inputDigest: session.data.compat.input,
     subtrees: new Map(),
+    // Per-run attempt numbers for formatters, so their artifacts never collide across LOOP iterations.
+    formatAttempts: new Map(),
   };
   await store.initialize(state);
   const context = { input, steps: {} };
@@ -351,7 +353,7 @@ function whyRan(record, now, table = REASONS) {
 
 // ── Prompt steps ────────────────────────────────────────────────────────────
 function resultEntry(record, loaded, ord) {
-  return { output: loaded.output, artifact: loaded.artifact, ...(loaded.files ? { files: loaded.files } : {}), ...('json' in loaded ? { json: loaded.json } : {}), resultId: record.resultId, ord };
+  return { output: loaded.output, artifact: loaded.artifact, ...(loaded.files ? { files: loaded.files } : {}), resultId: record.resultId, ord };
 }
 
 // Load a cached result only if everything it points at is intact.
@@ -605,8 +607,9 @@ async function convertStep(node, context, sh, scope, main) {
   }
 
   // Attempts count across the run (a LOOP runs the formatter once per iteration), so file names never collide.
-  const attempt = (state.steps[id].formatAttempts ?? 0) + 1;
-  state.steps[id].formatAttempts = attempt;
+  // The counter lives on the run, not on state.steps[id], which a cache hit replaces.
+  const attempt = (sh.formatAttempts.get(id) ?? 0) + 1;
+  sh.formatAttempts.set(id, attempt);
   const startedAt = new Date().toISOString();
   const reason = !sh.readCache ? undefined : cacheProblem ? `its stored result is unusable: ${cacheProblem}` : whyRan(record, partDigests, FORMAT_REASONS);
   const entryState = { address: caddress, step: id, kind: 'format', invocation, attempt, action: 'EXECUTED', status: 'RUNNING', executor: 'formatter', ...(reason ? { reason } : {}), fingerprint, startedAt };
