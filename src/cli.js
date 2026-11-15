@@ -9,7 +9,7 @@ import { AweError } from './errors.js';
 import { validateTemplate, templateReferences } from './template.js';
 import { initWorkflow } from './init.js';
 import { validateReferences } from './preflight.js';
-import { resolveExecutor, noExecutorError } from './config.js';
+import { resolveExecutor, resolveFormatter, noExecutorError } from './config.js';
 import { show, renderSteps, countsLine, cacheLine } from './show.js';
 import { findExecutable, detectAgent } from './which.js';
 
@@ -184,8 +184,12 @@ async function prepare(cwd, dir) {
   const unused = entry.common !== undefined && entry.common.trim() && !commonUsers.length
     ? ['awe.json has "common", but no prompt writes {{ common }}, so it is not sent to any step. Put {{ common }} in the prompts that need it.']
     : [];
-  const warnings = [...entry.settings.warnings, ...unused, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
-  return { entry, tree, promptIds, sources, outputs, warnings, commonUsers };
+  const jsonSteps = promptIds.filter(id => entry.settings.steps[id]?.json);
+  const idleFormatter = entry.settings.formatter && !jsonSteps.length
+    ? ['awe.json has "formatter", but no step declares "json", so it is never used.']
+    : [];
+  const warnings = [...entry.settings.warnings, ...unused, ...idleFormatter, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
+  return { entry, tree, promptIds, sources, outputs, warnings, commonUsers, jsonSteps };
 }
 
 // JSON consumers (CI) do not read stderr: carry the warnings in the document itself.
@@ -195,13 +199,16 @@ function prettyPlan(plan) {
   return plan.map(p => `  ${p.type.padEnd(9)} ${(p.id || '-').padEnd(8)} ${p.path}`).join('\n');
 }
 
-function describeExecutors(settings, promptIds, overrides, root) {
+function describeExecutors(settings, promptIds, overrides, root, jsonSteps = []) {
   const seen = new Map();
   for (const id of promptIds) {
     const executor = resolveExecutor(settings, id, overrides, root);
     seen.set(executor.name, executor.display);
   }
-  return seen.size === 1 ? [...seen.values()][0] : [...seen].map(([name, display]) => `${name}=${display}`).join(' · ');
+  const text = seen.size === 1 ? [...seen.values()][0] : [...seen].map(([name, display]) => `${name}=${display}`).join(' · ');
+  // Steps that declare "json" make one more call each, with the formatter command.
+  const formatters = [...new Set(jsonSteps.map(id => resolveFormatter(settings, id, overrides, root).display))];
+  return formatters.length ? `${text} · formatter=${formatters.join(', ')}` : text;
 }
 
 // ── Commands ────────────────────────────────────────────────────────────────
@@ -221,7 +228,7 @@ async function initCommand({ dir }, cwd, options = {}) {
 }
 
 async function checkCommand({ dir, flags }, cwd) {
-  const { entry, tree, promptIds, warnings, commonUsers } = await prepare(cwd, dir);
+  const { entry, tree, promptIds, warnings, commonUsers, jsonSteps } = await prepare(cwd, dir);
   const plan = getPlan(tree);
   const names = new Set(['run', ...promptIds.map(id => entry.settings.steps[id]?.executor ?? 'run')]);
   const executors = [];
@@ -232,6 +239,17 @@ async function checkCommand({ dir, flags }, cwd) {
     executors.push({ name, display: resolveExecutor(entry.settings, '', { executor: name }, entry.root).display, executable: spec.argv[0], found });
   }
   const used = executors.filter(item => item.name !== 'run' || promptIds.some(id => (entry.settings.steps[id]?.executor ?? 'run') === 'run'));
+  // The formatter of each step that declares "json" (several steps may share one command).
+  const formatters = new Map();
+  for (const id of jsonSteps) {
+    const argv = (entry.settings.steps[id]?.formatter ?? entry.settings.formatter ?? entry.settings.run)?.argv;
+    if (!argv) { formatters.set(`none:${id}`, { name: 'formatter', steps: [id], display: null, executable: null, found: null }); continue; }
+    const display = resolveFormatter(entry.settings, id, {}, entry.root).display;
+    const known = formatters.get(display) ?? { name: 'formatter', steps: [], display, executable: argv[0], found: await findExecutable(argv[0], { cwd: entry.root }) };
+    known.steps.push(id);
+    formatters.set(display, known);
+  }
+  used.push(...formatters.values());
   const problems = used.filter(item => !item.display || !item.found);
   // The exit code answers "is the workflow valid?" (invalid workflows throw, exit 2). A missing executor is
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
@@ -242,8 +260,9 @@ async function checkCommand({ dir, flags }, cwd) {
   if (commonChars) lines.push(`Common    ${commonChars} characters, written into ${commonUsers.length ? `${commonUsers.length} of ${promptIds.length} steps by {{ common }}${commonUsers.length < promptIds.length && commonUsers.length <= 8 ? ` (${commonUsers.join(', ')})` : ''}` : 'no step (nothing writes {{ common }})'}${commonChars > 4000 ? '. That is large: each of those steps pays for it, and any edit reruns them' : ''}`);
   lines.push(prettyPlan(plan), '');
   for (const item of used) {
-    if (!item.display) lines.push(`Executor  ${item.name}: NOT CONFIGURED`);
-    else lines.push(`Executor  ${item.name}: ${item.display}   ${item.found ? `(found: ${item.found})` : `NOT READY — "${item.executable}" was not found on PATH`}`);
+    const label = item.name === 'formatter' ? `formatter (JSON of ${item.steps.join(', ')})` : item.name;
+    if (!item.display) lines.push(`Executor  ${label}: NOT CONFIGURED`);
+    else lines.push(`Executor  ${label}: ${item.display}   ${item.found ? `(found: ${item.found})` : `NOT READY — "${item.executable}" was not found on PATH`}`);
   }
   if (used.some(item => !item.display)) {
     lines.push('', noExecutorError(entry.settings).message);
@@ -256,7 +275,7 @@ async function checkCommand({ dir, flags }, cwd) {
 }
 
 async function runCommand({ dir, step, flags }, cwd, options) {
-  const { entry, tree, promptIds, sources, outputs, warnings } = await prepare(cwd, dir);
+  const { entry, tree, promptIds, sources, outputs, warnings, jsonSteps } = await prepare(cwd, dir);
   const target = step ? parseStepArg(step) : undefined;
 
   if (flags.dry) {
@@ -270,6 +289,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
   const overrides = { executor: flags.executor, timeoutSeconds: flags.timeout };
   const state = await runWorkflow(entry, tree, {
     resolveExecutor: id => resolveExecutor(entry.settings, id, overrides),
+    resolveFormatter: id => resolveFormatter(entry.settings, id, overrides, entry.root),
     input: flags.input, signal: options.signal, hooks: options.hooks,
     step: target?.step, iterations: target?.iterations, sources, outputs,
     cache: flags.cache ? true : flags.noCache ? false : undefined,
@@ -279,7 +299,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
   if (flags.json) return { output: JSON.stringify(withWarnings(state, warnings), null, 2), code, warnings };
 
   const lines = [
-    `Workflow  ${path.basename(entry.root)} (${promptIds.length} steps in plan)    Executor  ${describeExecutors(entry.settings, promptIds, overrides, entry.root)}`,
+    `Workflow  ${path.basename(entry.root)} (${promptIds.length} steps in plan)    Executor  ${describeExecutors(entry.settings, promptIds, overrides, entry.root, jsonSteps)}`,
     `Cache     ${cacheLine(state)}`,
     '',
     ...renderSteps(state, entry.root),
@@ -306,15 +326,24 @@ function nextHint(state, promptIds, entry, overrides) {
   if (state.status === 'INTERRUPTED') return state.target ? `awe run ${state.target.address}${retry}` : `awe run --cache${retry}   (reuses the steps that already finished)`;
   const failed = state.error?.step;
   if (!failed) return null;
+  const seconds = value => +(value / 1000).toFixed(1);
+  // A step that declares "json" has a formatter, listed as "1.1 json". The step itself is done and cached, so
+  // running with the cache redoes only the formatter. (Without the cache the whole run starts over.)
+  if (failed.endsWith(' json')) {
+    const stepId = failed.slice(0, -' json'.length).split('@')[0];
+    if (state.error.code === 'EXECUTOR_TIMEOUT') {
+      const current = resolveFormatter(entry.settings, stepId, overrides).timeoutMs;
+      return `awe run --cache --timeout ${Math.ceil(seconds(current) * 2)}${retry}    (formatter limit now ${seconds(current)}s)   ·   awe show ${failed.replace(' json', '')} --err`;
+    }
+    if (state.error.code === 'UNKNOWN_EFFECT') return null;
+    return `awe run --cache${retry}   (${failed.replace(' json', '')} comes from the cache, so only its formatter runs again; fix the "json" declaration or the formatter command first)`;
+  }
   const base = failed.split('@')[0];
   if (state.error.code === 'EXECUTOR_TIMEOUT') {
     const current = resolveExecutor(entry.settings, base, overrides).timeoutMs;
-    const seconds = value => +(value / 1000).toFixed(1);
     return `awe run ${failed} --timeout ${Math.ceil(seconds(current) * 2)}${retry}    (limit now ${seconds(current)}s)   ·   awe show ${failed} --err`;
   }
   if (state.error.code === 'UNKNOWN_EFFECT') return null;
-  // The command finished; what it printed was rejected. Fix the prompt (or the declaration) and run the step again.
-  if (['OUTPUT_NOT_JSON', 'OUTPUT_JSON_INVALID'].includes(state.error.code)) return `awe run ${failed}   (after fixing the prompt, or the "json" declaration in awe.json)`;
   return `awe show ${failed} --err   ·   awe run ${failed}${retry}`;
 }
 

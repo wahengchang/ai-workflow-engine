@@ -31,24 +31,24 @@ AWE owns step order, routing, outputs, attempt artifacts and trace. Do **not** i
 
 ## JSON step output
 
-When later steps need fields from an answer, declare `steps.<id>.json` in `awe.json`. `true` accepts any JSON; a schema
-checks its shape before the step succeeds. For three role assignments, merge this into the existing configuration:
+When later steps need fields from an answer, keep the two jobs apart: the step answers in prose (its prompt never mentions
+JSON) and a **formatter** command turns that text into JSON. Declare it with `steps.<id>.json` in `awe.json` (`true`
+accepts any JSON; a schema checks its shape). awe runs the formatter as one extra call right after the step, with a fixed
+built-in prompt, and checks the result before the step counts as done. For a title and a description, merge this into the
+existing configuration:
 
 ```json
 {
+  "formatter": "codex exec --output-schema {schema_file} {prompt}",
   "steps": {
     "1.1": {
       "json": {
-        "type": "array",
-        "minItems": 3,
-        "maxItems": 3,
-        "items": {
-          "type": "object",
-          "required": ["role", "perspective"],
-          "properties": {
-            "role": { "type": "string" },
-            "perspective": { "type": "string" }
-          }
+        "type": "object",
+        "required": ["title", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string", "description": "a short title" },
+          "description": { "type": "string" }
         }
       }
     }
@@ -56,22 +56,26 @@ checks its shape before the step succeeds. For three role assignments, merge thi
 }
 ```
 
-1. Tell the producing prompt: "Reply with only the JSON, no code fence, no explanation." The whole stdout must be JSON.
-2. Declare the types and required fields consumers need. Supported keywords are `type`, `minItems`, `maxItems`, `items`,
-   `required`, `properties`, `enum`; unsupported keywords are configuration errors. `required` checks presence; `properties`
-   checks a present field's shape. Include `type` at each level where shape matters. Extra fields are allowed.
-3. Read values with `{{ steps["1.1"].json[0].role }}`. Paths support `.key`, `[0]`, `["key"]`, with no expressions or calls.
-   Strings are inserted as is, numbers and booleans as text, `null` as `null`, and arrays/objects as compact JSON. Missing
-   fields, wrong shapes and out-of-range indexes are errors. Use fixed indexes for the branches declared in `FLOW.json`;
-   JSON arrays do not create branches automatically.
-4. Run `awe check`, then `awe run --dry` to inspect the wiring. These check reference syntax and upstream declarations;
-   they cannot prove that a future model answer will have the expected fields.
-5. On `OUTPUT_NOT_JSON` or `OUTPUT_JSON_INVALID`, inspect `awe show <step>` for the rejected raw answer and
-   `awe show <step> --json` for its error and `rejectedArtifact` path. For loops use the occurrence, e.g. `1.1.1@2`.
-   Fix the prompt or declaration, rerun `awe run <step>` without `--retry`, then use `awe run --cache` to continue.
-   Downstream steps and the join do not run after a rejection; already-started parallel siblings finish independently.
-   A rejection does not roll back command effects. Changing a JSON declaration invalidates that step and its dependents;
-   upgrading from a pre-JSON build reruns cached steps once (`awe was upgraded`).
+1. The formatter command is top-level `formatter` (a step can override it with `steps.<id>.formatter`; without any it is
+   `run`). It has `{prompt}`, `{prompt_file}` and stdin like `run`, plus `{schema}` (the declaration as JSON text) and
+   `{schema_file}` (a file with it) for a tool's own structured-output flag (claude `--json-schema`, codex
+   `--output-schema`; opencode and omp have no such flag, so the built-in prompt does the work). The flags are optional: awe
+   does the checking. The formatter prompt is fixed and cannot be changed. Ask the user which command to use; it costs one more
+   call per declared step.
+2. Declare what consumers need. Supported keywords: `type`, `minItems`, `maxItems`, `items`, `required`, `properties`,
+   `additionalProperties`, `enum`, `description` (a hint for the formatter); anything else is a configuration error.
+3. Read values with `{{ steps["1.1"].json.title }}` / `{{ steps["1.1"].json[0].role }}`. Paths support `.key`, `[0]`, `["key"]`,
+   with no expressions or calls. Strings are inserted as is, numbers and booleans as text, `null` as `null`, and arrays/objects
+   as compact JSON. Missing fields, wrong shapes and out-of-range indexes are errors. `.output` is still the step's own text
+   and `.artifact` its file. Use fixed indexes for the branches declared in `FLOW.json`; JSON arrays do not create branches.
+4. Run `awe check` (it also checks the formatter exists), then `awe run --dry` (it shows the formatter prompt as `1.1 json`).
+   These cannot prove that a future model answer will fit the declaration.
+5. `awe run` lists the formatter under its step (`1.1 json`). `awe show 1.1` prints the step's text and the JSON; `--prompt`
+   and `--err` print both. On `OUTPUT_NOT_JSON` or `OUTPUT_JSON_INVALID` the formatter's output is saved (the path is in the
+   message; `awe show 1.1` shows it as a rejected `json` section), the run stops and no later step starts. The step itself is
+   cached, so after fixing the declaration or the formatter command run `awe run --cache`: only the formatter runs again. If
+   the formatter timed out or was stopped, awe asks for `--retry 1.1` (it covers the step and its formatter). Changing the
+   declaration or the formatter command reruns only the formatter. A rejection does not roll back command effects.
 
 See [JSON output](https://github.com/wahengchang/ai-workflow-engine/blob/main/docs/cli.md#json-output) for the full contract.
 

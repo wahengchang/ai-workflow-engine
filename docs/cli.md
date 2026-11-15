@@ -317,25 +317,25 @@ so generated files never count as steps. Only named files are supported: no dire
 
 ## JSON output
 
-A step can promise that its answer is JSON. awe parses and checks it **before the step counts as done**, so a later prompt
-can read parts of it, and a bad answer stops the workflow where it happened. Declare it per step in `awe.json`:
+Some steps should hand something structured to the next ones: a title and a description, three roles. Keep the two jobs
+apart. The step answers in plain prose, with a prompt that never mentions JSON; **a second command, the formatter**, turns
+that text into the JSON you declared; awe checks the result **before the step counts as done**. Later prompts then read
+parts of it, and a bad answer stops the workflow where it happened. You write one thing, the declaration in `awe.json`:
 
 ```json
 {
   "version": 2,
+  "run": "claude -p {prompt}",
+  "formatter": "codex exec --output-schema {schema_file} {prompt}",
   "steps": {
     "1.1": {
       "json": {
-        "type": "array",
-        "minItems": 3,
-        "maxItems": 3,
-        "items": {
-          "type": "object",
-          "required": ["role", "perspective"],
-          "properties": {
-            "role": { "type": "string" },
-            "perspective": { "type": "string" }
-          }
+        "type": "object",
+        "required": ["title", "description"],
+        "additionalProperties": false,
+        "properties": {
+          "title": { "type": "string", "description": "a short title" },
+          "description": { "type": "string" }
         }
       }
     }
@@ -343,68 +343,133 @@ can read parts of it, and a bad answer stops the workflow where it happened. Dec
 }
 ```
 
-`"json": true` means "any valid JSON". Omit `json` or set it to `false` to disable validation. Later prompts read it by key and index:
+`1.1-story.md` just says what to write: *"Generate a title and a description for the story."* A later prompt reads the result:
 
 ```md
-Role: {{ steps["1.1"].json[0].role }}
-View: {{ steps["1.1"].json[0].perspective }}
+Title: {{ steps["1.1"].json.title }}
+About: {{ steps["1.1"].json.description }}
 ```
 
-With three parallel steps `1.2.1`, `1.2.2`, `1.2.3` reading `[0]`, `[1]` and `[2]`, each branch gets its own role. Nothing
-else changes: `{{ steps["1.1"].output }}` is still the raw text and `{{ steps["1.1"].artifact }}` the saved file.
+`{{ steps["1.1"].output }}` is still the step's own text, and `{{ steps["1.1"].artifact }}` its file. `.json` is what the
+formatter made of it.
 
-**Reading values.** A path is `.key`, `[0]` or `["key with spaces"]`, one after another. A string is inserted as it is, a number
-or boolean as its text, `null` as the literal text `null`, and an object or array as compact JSON (so `{{ steps["1.1"].json }}` is the whole value). There is no
-arithmetic, no calls and no other syntax: a template cannot run code or read inherited properties. Own JSON keys named
-`__proto__` or `constructor` are plain data and can be read like any other key. A
-missing key or an index past the end is an error that names the place: `There is no "perspective" at json[1] (it has: role)`,
-`Index 2 is out of range at json: the array has 2 items`. The same paths work in `FLOW.json` gates:
-`"test": "{{ steps[\"2.1\"].json.verdict }}"`.
+### What happens
 
-**What counts as JSON.** The **whole** output must be JSON. A Markdown code fence, or any text before or after it, is an
-error (`OUTPUT_NOT_JSON`) that says which, and tells you to ask the model for the JSON alone. Ask for that in the prompt
-("Reply with only the JSON, no code fence, no explanation").
+For a step that declares `"json"`, awe runs **one more command call**, right after the step:
 
-**The declaration.** A small subset of JSON Schema; any other key is rejected when `awe.json` is read, so a typo is never
-silently ignored:
+1. the step runs as usual and finishes with its text;
+2. awe runs the **formatter** with a fixed, built-in prompt (the rules, your declaration as a JSON Schema, and the step's text
+   between `--- TEXT START ---` / `--- TEXT END ---`). The prompt cannot be changed: one wording means every tool behaves alike;
+3. the formatter's output must be JSON **only** and must fit the declaration. Then the step is done, and `.json` is available.
+
+`awe run` lists the formatter under its step, so its time, whether it came from the cache, and its own failure are visible:
+
+```text
+  1.1      ran      18s   -> .awe/runs/…/artifacts/1-1-attempt-1.md
+  1.1 json ran       4s   -> .awe/runs/…/artifacts/1-1-json-attempt-1.md
+Reused 0 steps · Ran 3 steps   (1 JSON formatter run included)
+```
+
+This is one more call, so one more bill. `awe run --dry` shows the formatter prompt (`1.1 json`) with the step's text as a
+placeholder, and `awe check` lists the formatter command next to the others.
+
+### The formatter command
+
+Set it once, at the top level of `awe.json`, written like `run`; a step can override it:
+
+```json
+{ "formatter": "claude -p {prompt}", "steps": { "1.1": { "json": true, "formatter": "codex exec {prompt}" } } }
+```
+
+Precedence: `steps.<id>.formatter` → top-level `formatter` → `run`. Without a `formatter`, the `run` command is used, so it
+works out of the box. The formatter has the same `{prompt}`, `{prompt_file}` and stdin rules as `run`, plus two placeholders
+that only it has:
+
+| Placeholder | Value |
+| --- | --- |
+| `{schema}` | the declaration as JSON text (for flags such as claude's `--json-schema`) |
+| `{schema_file}` | a file holding that text, under `.awe/runs/<run>/artifacts/` (for flags such as codex's `--output-schema`) |
+
+A tool's own structured-output flag is optional, because the checks are awe's. `claude` has `--json-schema` and `codex exec`
+has `--output-schema`; `opencode run --format json` and omp's JSON mode print an event stream, not an answer that fits a
+schema, so there the built-in prompt does the work. A flag only helps if the schema suits the tool: OpenAI's strict mode, for
+example, wants `"additionalProperties": false` on objects, which is why that keyword is supported. `{schema}` and
+`{schema_file}` in `run` or `executors` are rejected. The environment variables `AWE_STEP`, `AWE_ADDRESS` (`1.1 json`) and
+`AWE_RUN_ID` are set for the formatter too. Its time limit is the step's (`steps.<id>.timeout`, else `timeout`, `--timeout`).
+
+### The declaration
+
+`"json": true` means "any valid JSON". Otherwise a small subset of JSON Schema; any other key is rejected when `awe.json` is
+read, so a typo is never silently ignored:
 
 | Key | Meaning |
 | --- | --- |
 | `type` | `object`, `array`, `string`, `number`, `integer`, `boolean`, `null` (or a list of them) |
 | `minItems`, `maxItems` | array length; both `3` means exactly three |
 | `items` | a declaration every array item must satisfy |
-| `required` | field names an object must have; use `properties` to also check their types |
+| `required` | field names an object must have |
 | `properties` | declarations for named fields, applied when the field is present |
-| `enum` | the allowed JSON values; object key order does not matter, array order does |
+| `additionalProperties` | `false`: fields not listed in `properties` are errors |
+| `enum` | the allowed values |
+| `description` | only a hint for whoever makes the JSON (it is in the formatter prompt); not checked |
 
-Array keywords apply only to arrays; `required` and `properties` apply only to objects. Include `type` to reject the
-wrong shape. Fields not listed in `properties` are allowed; this subset has no `additionalProperties` keyword.
+### Reading values
 
-A violation (`OUTPUT_JSON_INVALID`) lists what is wrong, with paths, for example `$ must have exactly 3 items, got 2` or
-`$[1].perspective is required`. Either way the step fails and **its downstream steps do not start** (a parallel group after it
-never forks). If the step is inside an already-started parallel group, siblings finish independently and successful sibling
-results remain cached; the failing branch stops and the join does not run.
+A path is `.key`, `[0]` or `["key with spaces"]`, one after another. A string is inserted as it is, a number or boolean as
+its text, an object or array as compact JSON (so `{{ steps["1.1"].json }}` is the whole value). There is no arithmetic, no
+calls and no other syntax: a template cannot run code. A missing key or an index past the end is an error that names the
+place: `There is no "perspective" at json[1] (it has: role)`, `Index 2 is out of range at json: the array has 2 items`. The same
+paths work in `FLOW.json` gates: `"test": "{{ steps[\"2.1\"].json.verdict }}"`. With three parallel steps reading `[0]`, `[1]`
+and `[2]` of one step's JSON, each branch gets its own item.
 
-The model's raw output stays saved, so the failure shows where: `The model's raw output is saved in .awe/runs/…`.
-`awe show 1.1` prints the latest raw answer, including a rejected one; `awe show 1.1 --json` includes its error and
-`rejectedArtifact` path. Use `--run <id>` to inspect an older answer, or an occurrence such as `1.1.1@2` for a loop.
-This is a known failure: inspect the answer, fix the prompt or declaration, and run `awe run 1.1` again without `--retry`.
-That command stops after the named step; `awe run --cache` then continues the workflow using valid cached results.
-JSON rejection does not undo any files or other effects produced by the command.
+### When it fails
 
-**Checks.** `awe check` verifies the syntax of every JSON reference and that the step it reads is declared (and runs earlier),
-but not the data, which does not exist yet; that is checked when the step runs. `awe run --dry` shows
-`[json of 1.1[0].role]` where a value would go.
+The formatter's output must be JSON **alone**: a Markdown code fence, or any text before or after it, is `OUTPUT_NOT_JSON`
+(and the message says which). A mismatch is `OUTPUT_JSON_INVALID` with paths, for example `$ must have exactly 3 items, got 2`
+or `$[1].perspective is required`. A formatter that cannot run fails like any command (`EXECUTOR_FAILED`, `EXECUTOR_TIMEOUT`).
+In every case the run stops, **no later step starts** (a parallel group after it never forks), and what the formatter returned
+stays saved:
 
-**Cache.** The declaration is part of the step's fingerprint: changing or removing it reruns the step (and so the steps that
-read it) and says `(its JSON declaration changed)`. A cached JSON step is parsed again when it is reused, so later steps still read
-it, and a stored output that no longer fits its declaration is rerun instead of reused.
+```text
+  1.1      ran      18s   -> .awe/runs/…/artifacts/1-1-attempt-1.md
+  1.1 json FAILED   The JSON made by the formatter of step 1.1 does not match its declaration in awe.json:
+             $[1].perspective is required
+           The formatter's output is saved in .awe/runs/…/artifacts/1-1-json-attempt-1.md
+Next  awe run --cache   (1.1 comes from the cache, so only its formatter runs again; …)
+```
 
-Upgrading from a build before JSON output invalidates existing step fingerprints once (`awe was upgraded`); the next
-cached run executes those steps again. Existing `awe.json` files and raw artifacts remain readable.
+The step itself is finished and cached, so **recovering costs only the formatter**: fix the declaration or the formatter command,
+then `awe run --cache`. No retry loop is built in: each failure is visible, and you decide whether to try again. A formatter that was
+stopped or timed out may have acted, so awe will not resend it on its own: `--retry 1.1` (the same flag as for the step) covers both.
+
+### Showing it
+
+`awe show 1.1` prints the step's text, then what the formatter made of it (or, when rejected, what it returned):
+
+```text
+── output ──
+Title: The Fox. About a fox who learns to share.
+
+── json ──
+{"title":"The Fox","description":"About a fox who learns to share"}
+```
+
+`awe show 1.1 --prompt` and `--err` print both sections too. Steps without a declaration print as before.
+
+### Checks and cache
+
+`awe check` verifies the syntax of every JSON reference, that the step it reads is declared (and runs earlier), and that the
+formatter command exists; the data does not exist yet, so it is checked when the step runs. The formatter is cached on its own,
+keyed by the step's result, the declaration, the formatter command and the built-in prompt:
+
+- changing the declaration or the formatter command reruns **only the formatter** (`(its JSON declaration changed)`,
+  `(its formatter command changed)`), never the step before it;
+- `awe run 1.1` runs the step, and so its formatter runs again (`(the step's text changed)`);
+- removing the declaration drops the formatter; the step stays cached;
+- a stored formatter result that was edited, or no longer fits the declaration, is rerun instead of reused.
 
 **Limits.** The number of parallel branches is still written in `FLOW.json`: this reads values out of one answer, it does not
-create a branch per array item (a dynamic `foreach` would be a separate feature).
+create a branch per array item (a dynamic `foreach` would be a separate feature). The formatter prompt is not configurable.
 
 ## Interruptions, crashes and unknown outcomes
 
@@ -474,7 +539,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `CACHE_BUSY` | another `awe run` is using this workflow's cache |
 | `EXECUTOR_TIMEOUT`, `EXECUTOR_FAILED`, `EXECUTOR_ERROR` | the command timed out, exited non-zero, or could not start |
 | `OUTPUT_MISSING`, `OUTPUT_STALE`, `OUTPUT_INVALID`, `OUTPUT_CONFLICT` | see [output files](#output-files) |
-| `OUTPUT_NOT_JSON`, `OUTPUT_JSON_INVALID` | a step declared as JSON answered with something else, or with JSON that does not fit; see [JSON output](#json-output) |
+| `OUTPUT_NOT_JSON`, `OUTPUT_JSON_INVALID` | the formatter of a step that declares JSON answered with something else, or with JSON that does not fit; see [JSON output](#json-output) |
 | `RUN_NOT_FOUND`, `PROMPT_NOT_STORED` | `awe show` has nothing to show |
 
 ## Upgrading from v0.1

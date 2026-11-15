@@ -48,7 +48,9 @@ export function splitCommand(text, where = 'command') {
   return tokens;
 }
 
-export const PLACEHOLDER = /\{prompt_file\}|\{prompt\}/g;
+// {schema} and {schema_file} exist only in the "formatter" command: the declaration a JSON step must satisfy.
+export const PLACEHOLDER = /\{prompt_file\}|\{prompt\}|\{schema_file\}|\{schema\}/g;
+export const usesSchemaPlaceholder = argv => argv.some(token => /\{schema_file\}|\{schema\}/.test(token));
 
 export const usesPlaceholder = argv => argv.some(token => /\{prompt_file\}|\{prompt\}/.test(token));
 
@@ -75,7 +77,7 @@ const workflowFile = (token, root) => {
 // workflow are shown; other arguments become "…" so credentials passed on the command line never
 // reach the terminal or logs.
 export const displayCommand = (argv, root) => argv.map((token, index) => {
-  if (index === 0 || isPlainToken(token) || /^(\{prompt\}|\{prompt_file\})$/.test(token) || workflowFile(token, root)) return token;
+  if (index === 0 || isPlainToken(token) || /^(\{prompt\}|\{prompt_file\}|\{schema\}|\{schema_file\})$/.test(token) || workflowFile(token, root)) return token;
   return '…';
 }).join(' ');
 

@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { AweError, assertAwe } from './errors.js';
 import { flatten } from './discover.js';
 import { renderTemplate, templateReferences, validateTemplate } from './template.js';
-import { readJsonOutput } from './json-output.js';
+import { readJsonOutput, buildFormatPrompt, FORMAT_PROMPT_VERSION } from './json-output.js';
 import { executePrompt, needsPromptFile } from './executor.js';
 import { RunStore } from './storage.js';
 import { buildPrompt, gateValue } from './runtime.js';
@@ -13,7 +13,7 @@ import { assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs
 import { openSession, workspaceSalt } from './cache.js';
 
 // Bump when the parts of a fingerprint change, so records written by an older awe are recognised.
-const FINGERPRINT_VERSION = 4;
+const FINGERPRINT_VERSION = 5;
 
 // ── Addresses ───────────────────────────────────────────────────────────────
 // A step ID names the prompt; an *occurrence* names which pass through enclosing LOOPs
@@ -24,7 +24,13 @@ export const addressOf = (stepId, loops) => (loops.length ? `${stepId}@${loopKey
 
 // What people type and read: "2.1.1" or "2.1.1@2.1" (iteration of each enclosing LOOP, outer to inner).
 // The internal cache key keeps the loop paths, so it stays stable if loops are renamed in docs.
+// The formatter of a step that declares "json" is its own cached unit, addressed like the step plus this suffix.
+// People never type it: `awe run 1.1` runs both, and --retry 1.1 covers both.
+export const FORMAT_SUFFIX = '~json';
+export const isFormatAddress = address => address.endsWith(FORMAT_SUFFIX);
+
 export function displayAddress(address) {
+  if (isFormatAddress(address)) return displayAddress(address.slice(0, -FORMAT_SUFFIX.length));
   const at = address.indexOf('@');
   if (at < 0) return address;
   return `${address.slice(0, at)}@${[...address.slice(at + 1).matchAll(/=(\d+)/g)].map(m => m[1]).join('.')}`;
@@ -38,7 +44,7 @@ export function parseStepArg(text) {
 
 function knownOccurrences(session, stepId) {
   return session.records()
-    .filter(record => record.stepId === stepId && record.address.includes('@') && (record.latest || record.pending || record.unknown || record.lastFailure || record.history.length))
+    .filter(record => record.stepId === stepId && !isFormatAddress(record.address) && record.address.includes('@') && (record.latest || record.pending || record.unknown || record.lastFailure || record.history.length))
     .map(record => record.address);
 }
 
@@ -98,6 +104,8 @@ const hook = (sh, stage, info) => sh.hooks?.[stage]?.(info);
 // ── Entry point ─────────────────────────────────────────────────────────────
 // options: {
 //   resolveExecutor(stepId) -> { name, argv, display, timeoutMs }   (required)
+//   resolveFormatter(stepId) -> the same, for the command that turns a "json" step's text into JSON
+//                         (default: the step's own executor)
 //   input, signal, hooks,
 //   step, iterations      the step to (re)run; omit both for the whole workflow
 //   cache                 true: reuse valid results; false: rerun everything. Default: on when a step
@@ -117,6 +125,8 @@ export async function runWorkflow(entry, tree, options = {}) {
   const prompts = nodes.filter(node => node.type === 'prompt');
   // Fail before any state is created if some step has no usable executor.
   for (const node of prompts) options.resolveExecutor(node.id);
+  const resolveFormatter = options.resolveFormatter ?? (id => ({ ...options.resolveExecutor(id), name: 'formatter' }));
+  for (const node of prompts) if (entry.settings.steps[node.id]?.json) resolveFormatter(node.id);
 
   let targetNode = null;
   if (options.step !== undefined) {
@@ -137,21 +147,23 @@ export async function runWorkflow(entry, tree, options = {}) {
   const compat = { root: await realpath(entry.root), input: secretDigest(salt, input) };
   const session = await openSession(entry.root, compat);
   try {
-    return await runInSession(entry, tree, { options, outputs, info, targetNode, input, session, salt });
+    return await runInSession(entry, tree, { options, outputs, info, targetNode, input, session, salt, resolveFormatter });
   } finally {
     await session.release();
   }
 }
 
-async function runInSession(entry, tree, { options, outputs, info, targetNode, input, session, salt }) {
+async function runInSession(entry, tree, { options, outputs, info, targetNode, input, session, salt, resolveFormatter }) {
   // We hold the session lock, so an intent left behind by a dead process is now known to be orphaned.
   await session.reconcile(entry.root);
-  const unknown = new Map(session.unknownAddresses().map(address => [displayAddress(address), address]));
+  // A step and its formatter share a name for --retry: acknowledging 1.1 covers whichever of them is unknown.
+  const unknown = new Map();
+  for (const address of session.unknownAddresses()) unknown.set(displayAddress(address), [...(unknown.get(displayAddress(address)) ?? []), address]);
   const acknowledged = new Set();
   for (const wanted of options.retry ?? []) {
     assertAwe(unknown.has(wanted), 'RETRY_UNKNOWN',
       `--retry ${wanted} does not match a step with an unknown outcome.${unknown.size ? ` Unknown: ${[...unknown.keys()].join(', ')}` : ' No step needs it.'}`);
-    acknowledged.add(unknown.get(wanted));
+    for (const address of unknown.get(wanted)) acknowledged.add(address);
   }
 
   let target = null;
@@ -183,7 +195,7 @@ async function runInSession(entry, tree, { options, outputs, info, targetNode, i
   const sh = {
     state, store, session, entry, outputs, info, target, sources, readCache, salt,
     signal: options.signal, hooks: options.hooks, acknowledged,
-    resolveExecutor: options.resolveExecutor,
+    resolveExecutor: options.resolveExecutor, resolveFormatter,
     commonDigest: sha256(entry.common ?? ''),
     inputDigest: session.data.compat.input,
     subtrees: new Map(),
@@ -309,7 +321,6 @@ const REASONS = [
   ['source', 'its prompt file changed'],
   ['executor', 'its command changed'],
   ['outputs', 'its output declarations changed'],
-  ['json', 'its JSON declaration changed'],
   ['control', 'its place in the workflow changed (IF branch or LOOP pass)'],
   ['upstream', 'an earlier step ran again'],
   ['plan', 'the workflow layout changed'],
@@ -317,13 +328,24 @@ const REASONS = [
   ['v', 'awe was upgraded'],
 ];
 
-function whyRan(record, now) {
+// The formatter step of a "json" step: why it runs again although a cache is in use.
+const FORMAT_REASONS = [
+  ['source', "the step's text changed"],
+  ['schema', 'its JSON declaration changed'],
+  ['formatter', 'its formatter command changed'],
+  ['promptVersion', 'awe was upgraded'],
+  ['plan', 'the workflow layout changed'],
+  ['address', 'the workflow layout changed'],
+  ['v', 'awe was upgraded'],
+];
+
+function whyRan(record, now, table = REASONS) {
   if (!record.latest) return record.lastFailure ? 'its previous attempt failed' : 'not cached yet';
   const before = record.latest.parts;
   // A guard for the next fingerprint change: today's older records live in sessions that are no longer opened.
   if (!before) return 'written by an older awe';
-  const reasons = [...new Set(REASONS.filter(([key]) => before[key] !== now[key]).map(([, text]) => text))];
-  if (!reasons.length && before.prompt !== now.prompt) reasons.push('its rendered prompt changed');
+  const reasons = [...new Set(table.filter(([key]) => before[key] !== now[key]).map(([, text]) => text))];
+  if (!reasons.length && table === REASONS && before.prompt !== now.prompt) reasons.push('its rendered prompt changed');
   return reasons.slice(0, 2).join(', ') || undefined;
 }
 
@@ -407,7 +429,7 @@ async function walkPrompt(node, context, sh, scope) {
     v: FINGERPRINT_VERSION, plan: node.relative, address, control: scope.control,
     // Only the steps that write {{ common }} depend on it; editing it must not rerun the others.
     common: usesCommon ? sh.commonDigest : null, source: sha256(source), input: sh.inputDigest, executor: executorDigest,
-    outputs: decls, json: jsonDecl ?? null, upstream: upstream.map(([step, result]) => [step, result.resultId]), prompt: sha256(prompt),
+    outputs: decls, upstream: upstream.map(([step, result]) => [step, result.resultId]), prompt: sha256(prompt),
   };
   const fingerprint = digestOf(parts);
   // Keyed digests of each part, kept next to the result so a later run can say *what* changed.
@@ -419,7 +441,7 @@ async function walkPrompt(node, context, sh, scope) {
   // The target is the thing being tested, so it always runs; everything else is reused when still valid
   // (unless the caller asked for no cache at all).
   if (!isTarget && sh.readCache && record.latest?.fingerprint === fingerprint) {
-    const cached = await loadCached(sh, record.latest, jsonDecl, id);
+    const cached = await loadCached(sh, record.latest, undefined, id);
     if (cached.reason) {
       event(sh, 'CACHE_INVALID', node, { address, reason: cached.reason });
       cacheProblem = cached.reason;
@@ -433,6 +455,7 @@ async function walkPrompt(node, context, sh, scope) {
       state.steps[id] = { attempts: state.steps[id]?.attempts ?? 0, status: 'COMPLETED', source: node.relative, reused, ...(record.latest.executor ? { executor: record.latest.executor } : {}), ...(sourcePrompt ? { prompt: sourcePrompt } : {}), artifact: cached.artifact, outputPreview: cached.output.slice(0, 200), ...(cached.details ? { files: cached.details } : {}) };
       state.reused++;
       event(sh, 'STEP_REUSED', node, { address, ...reused });
+      if (jsonDecl) await convertStep(node, context, sh, scope, { id, address, ord, jsonDecl, register });
       return false;
     }
   }
@@ -451,13 +474,13 @@ async function walkPrompt(node, context, sh, scope) {
   state.steps[id] = { ...(state.steps[id] ?? {}), attempts: attempt, status: 'RUNNING', source: node.relative, executor: executor.name };
   delete state.steps[id].error;
   delete state.steps[id].stderrTail;
+  delete state.steps[id].format;
   event(sh, 'STEP_STARTED', node, { address, attempt });
   let phase = 'prepare';
   let began = false;
   let promptFile = null;
   const keepPrompt = sh.entry.config.storePrompts !== false;
   let stderrTail = '';
-  let rejectedArtifact = null;
   try {
     // The rendered prompt is what `awe show <step> --prompt` prints, and what {prompt_file} points at.
     // "storePrompts": false keeps it only for the moment the command needs it.
@@ -479,15 +502,6 @@ async function walkPrompt(node, context, sh, scope) {
     await hook(sh, 'afterExecute', { address });
     const artifact = await sh.store.artifact(id, attempt, output, { exclusive: true });
     await hook(sh, 'afterArtifact', { address });
-    // A declared JSON output is parsed and checked before the step can succeed, so a bad answer stops here and
-    // downstream steps do not start. Already-started parallel siblings finish independently.
-    // The raw text is already saved, for `show` and debugging.
-    let json;
-    if (jsonDecl) {
-      rejectedArtifact = artifact;
-      json = readJsonOutput(output, jsonDecl, id);
-      rejectedArtifact = null;
-    }
     const files = !decls.length ? undefined
       : await captureOutputs({ root: sh.entry.root, stepId: id, decls, before, destDir: sh.store.fileDir(id, attempt) });
     await hook(sh, 'afterFiles', { address });
@@ -510,14 +524,8 @@ async function walkPrompt(node, context, sh, scope) {
       ...(files ? { files: Object.fromEntries(Object.entries(files).map(([name, file]) => [name, { ...file, path: path.relative(sh.store.dir, file.path) }])) } : {}),
     });
     await hook(sh, 'afterCommit', { address });
-    context.steps[id] = { output, artifact, ...(files ? { files: filePaths(files) } : {}), ...(jsonDecl ? { json } : {}), resultId, ord };
+    context.steps[id] = { output, artifact, ...(files ? { files: filePaths(files) } : {}), resultId, ord };
     register(resultId);
-    if (isTarget) {
-      state.stoppedAfter = displayAddress(address);
-      event(sh, 'TARGET_DONE', node, { address });
-      return true;
-    }
-    return false;
   } catch (error) {
     const interrupted = error.code === 'RUN_INTERRUPTED';
     // After a kill or timeout the command may have done anything; a plain non-zero exit is a known failure.
@@ -527,12 +535,148 @@ async function walkPrompt(node, context, sh, scope) {
       entryState.unknownOutcome = true;
       if (error.code === 'EXECUTOR_TIMEOUT') error.message += ` The command may have acted before it was stopped, so run again with --retry ${displayAddress(address)}.`;
     }
-    Object.assign(entryState, { status: interrupted ? 'INTERRUPTED' : 'FAILED', finishedAt: new Date().toISOString(), error: { code: error.code ?? 'UNEXPECTED', message: error.message }, ...(tail ? { stderrTail: tail } : {}), ...(rejectedArtifact ? { rejectedArtifact } : {}) });
-    state.steps[id] = { ...state.steps[id], status: interrupted ? 'INTERRUPTED' : 'FAILED', error: entryState.error, ...(tail ? { stderrTail: tail } : {}), ...(rejectedArtifact ? { rejectedArtifact } : {}) };
+    Object.assign(entryState, { status: interrupted ? 'INTERRUPTED' : 'FAILED', finishedAt: new Date().toISOString(), error: { code: error.code ?? 'UNEXPECTED', message: error.message }, ...(tail ? { stderrTail: tail } : {}) });
+    state.steps[id] = { ...state.steps[id], status: interrupted ? 'INTERRUPTED' : 'FAILED', error: entryState.error, ...(tail ? { stderrTail: tail } : {}) };
     event(sh, interrupted ? 'STEP_INTERRUPTED' : 'STEP_FAILED', node, { address, attempt, code: error.code ?? 'UNEXPECTED', message: error.message });
     if (began) await session.fail(address, { runId: state.runId, attempt, code: error.code ?? 'UNEXPECTED', message: error.message, unknown: unknownEffect });
     await sh.store.save(state);
     error.step ??= displayAddress(address);
+    error.stderrTail ??= tail;
+    throw error;
+  } finally {
+    if (!keepPrompt && promptFile) await rm(promptFile, { force: true });
+  }
+  // The step succeeded. If it declares JSON, its text now goes through the formatter; the step is only done
+  // (and a --target stop only happens) once that has worked, and a failure stops everything after it.
+  if (jsonDecl) await convertStep(node, context, sh, scope, { id, address, ord, jsonDecl, register });
+  if (isTarget) {
+    state.stoppedAfter = displayAddress(address);
+    event(sh, 'TARGET_DONE', node, { address });
+    return true;
+  }
+  return false;
+}
+
+// ── The formatter of a "json" step ──────────────────────────────────────────
+// A step that declares "json" answers in free text. This second, built-in step hands that text to the formatter
+// command with a fixed prompt and checks what comes back against the declaration. It is cached on its own
+// (keyed by the step's result, the declaration, the formatter command and the prompt wording), so:
+//   - changing the declaration reruns only this step, never the (expensive) step before it;
+//   - after a failure, `awe run --cache` finds the step cached and reruns only the formatter.
+async function convertStep(node, context, sh, scope, main) {
+  const { id, address, ord, jsonDecl, register } = main;
+  const { state, session } = sh;
+  const caddress = `${address}${FORMAT_SUFFIX}`;
+  const invocation = loopKey(scope.loops);
+  const formatter = sh.resolveFormatter(id);
+  const step = context.steps[id];
+  const schemaText = JSON.stringify(jsonDecl);
+  const parts = {
+    v: FINGERPRINT_VERSION, kind: 'format', plan: node.relative, address: caddress, source: step.resultId,
+    schema: jsonDecl, formatter: secretDigest(sh.salt, { argv: formatter.argv }), promptVersion: FORMAT_PROMPT_VERSION,
+  };
+  const fingerprint = digestOf(parts);
+  const partDigests = Object.fromEntries(Object.entries(parts).map(([key, value]) => [key, secretDigest(sh.salt, value)]));
+
+  const record = session.ensure(caddress, id);
+  let cacheProblem = null;
+  if (sh.readCache && record.latest?.fingerprint === fingerprint) {
+    const cached = await loadCached(sh, record.latest, jsonDecl, id);
+    if (cached.reason) {
+      event(sh, 'CACHE_INVALID', node, { address: caddress, reason: cached.reason });
+      cacheProblem = cached.reason;
+      await session.invalidate(caddress, cached.reason);
+    } else {
+      const reused = { runId: record.latest.runId, attempt: record.latest.attempt, resultId: record.latest.resultId, at: record.latest.completedAt };
+      const sourcePrompt = typeof record.latest.prompt === 'string' ? path.join(sh.entry.root, '.awe', 'runs', record.latest.runId, record.latest.prompt) : undefined;
+      state.invocations.push({ address: caddress, step: id, kind: 'format', invocation, action: 'REUSED', status: 'COMPLETED', fingerprint, from: reused, resultId: record.latest.resultId, artifact: cached.artifact });
+      state.steps[id].format = { status: 'COMPLETED', attempts: 0, reused, executor: 'formatter', artifact: cached.artifact, ...(sourcePrompt ? { prompt: sourcePrompt } : {}) };
+      state.reused++;
+      event(sh, 'STEP_REUSED', node, { address: caddress, ...reused });
+      context.steps[id] = { ...context.steps[id], json: cached.json, jsonArtifact: cached.artifact, resultId: record.latest.resultId };
+      register(record.latest.resultId);
+      return;
+    }
+  }
+
+  if (record.unknown && !sh.acknowledged.has(caddress)) {
+    event(sh, 'UNKNOWN_EFFECT', node, { address: caddress, ...record.unknown });
+    throw Object.assign(new AweError('UNKNOWN_EFFECT', `The formatter of step ${displayAddress(address)} has an unknown outcome: its previous attempt (run ${record.unknown.runId}, attempt ${record.unknown.attempt}) ended with ${record.unknown.reason} after the command may have started, and its external effects cannot be known. AWE will not resend it on its own. Check what it may have changed, then run the same command again with --retry ${displayAddress(address)}`), { step: `${displayAddress(address)} json` });
+  }
+
+  // Attempts count across the run (a LOOP runs the formatter once per iteration), so file names never collide.
+  const attempt = (state.steps[id].formatAttempts ?? 0) + 1;
+  state.steps[id].formatAttempts = attempt;
+  const startedAt = new Date().toISOString();
+  const reason = !sh.readCache ? undefined : cacheProblem ? `its stored result is unusable: ${cacheProblem}` : whyRan(record, partDigests, FORMAT_REASONS);
+  const entryState = { address: caddress, step: id, kind: 'format', invocation, attempt, action: 'EXECUTED', status: 'RUNNING', executor: 'formatter', ...(reason ? { reason } : {}), fingerprint, startedAt };
+  state.invocations.push(entryState);
+  state.steps[id].format = { status: 'RUNNING', attempts: attempt, executor: 'formatter' };
+  event(sh, 'STEP_STARTED', node, { address: caddress, attempt });
+
+  const prompt = buildFormatPrompt(step.output, jsonDecl);
+  const keepPrompt = sh.entry.config.storePrompts !== false;
+  let phase = 'prepare';
+  let began = false;
+  let promptFile = null;
+  let stderrTail = '';
+  let rejectedArtifact = null;
+  try {
+    if (keepPrompt || needsPromptFile(formatter.argv, prompt)) promptFile = await sh.store.prompt(id, attempt, prompt, 'json');
+    if (keepPrompt) { state.steps[id].format.prompt = promptFile; entryState.prompt = promptFile; }
+    const schemaFile = formatter.argv.some(token => token.includes('{schema_file}')) ? await sh.store.schema(id, attempt, schemaText) : undefined;
+    await session.begin(caddress, id, { runId: state.runId, attempt, fingerprint, startedAt });
+    began = true;
+    await sh.store.save(state);
+    await hook(sh, 'afterIntent', { address: caddress });
+    phase = 'execute';
+    const output = await executePrompt(prompt, {
+      argv: formatter.argv, timeoutMs: formatter.timeoutMs, cwd: sh.entry.root, signal: sh.signal,
+      promptFile, schema: schemaText, schemaFile, onStderr: tail => { stderrTail = tail; },
+      env: { AWE_STEP: id, AWE_ADDRESS: `${displayAddress(address)} json`, AWE_RUN_ID: state.runId },
+    });
+    phase = 'record';
+    assertAwe(typeof output === 'string', 'INVALID_RESULT', `The formatter of step ${id} produced invalid output`);
+    await hook(sh, 'afterExecute', { address: caddress });
+    // The formatter's answer is saved first, so a rejected one can still be read (awe show, the path in the error).
+    const artifact = await sh.store.artifact(id, attempt, output, { exclusive: true, kind: 'json' });
+    rejectedArtifact = artifact;
+    const json = readJsonOutput(output, jsonDecl, id, `The formatter of step ${id}`);
+    rejectedArtifact = null;
+    await hook(sh, 'afterArtifact', { address: caddress });
+
+    const resultId = randomUUID();
+    const bytes = Buffer.from(output, 'utf8');
+    const finishedAt = new Date().toISOString();
+    Object.assign(entryState, { status: 'COMPLETED', resultId, finishedAt, artifact, ...(stderrTail ? { stderrTail } : {}) });
+    state.steps[id].format = { status: 'COMPLETED', attempts: attempt, executor: 'formatter', artifact, ...(keepPrompt && promptFile ? { prompt: promptFile } : {}), ...(stderrTail ? { stderrTail } : {}) };
+    state.executed++;
+    event(sh, 'STEP_COMPLETED', node, { address: caddress, attempt, artifact });
+    await sh.store.save(state);
+    await hook(sh, 'beforeCommit', { address: caddress });
+    await session.commit(caddress, {
+      resultId, runId: state.runId, attempt, fingerprint, parts: partDigests, completedAt: finishedAt, executor: 'formatter',
+      ...(keepPrompt && promptFile ? { prompt: path.relative(sh.store.dir, promptFile) } : {}),
+      artifact: { path: path.relative(sh.store.dir, artifact), sha256: sha256(bytes), size: bytes.length },
+    });
+    await hook(sh, 'afterCommit', { address: caddress });
+    context.steps[id] = { ...context.steps[id], json, jsonArtifact: artifact, resultId };
+    register(resultId);
+  } catch (error) {
+    const interrupted = error.code === 'RUN_INTERRUPTED';
+    const unknownEffect = phase === 'execute' && (interrupted || error.code === 'EXECUTOR_TIMEOUT' || Boolean(error.signal));
+    const tail = error.stderrTail ?? stderrTail;
+    if (unknownEffect) {
+      entryState.unknownOutcome = true;
+      if (error.code === 'EXECUTOR_TIMEOUT') error.message += ` The command may have acted before it was stopped, so run again with --retry ${displayAddress(address)}.`;
+    }
+    const failure = { code: error.code ?? 'UNEXPECTED', message: error.message };
+    Object.assign(entryState, { status: interrupted ? 'INTERRUPTED' : 'FAILED', finishedAt: new Date().toISOString(), error: failure, ...(tail ? { stderrTail: tail } : {}), ...(rejectedArtifact ? { rejectedArtifact } : {}) });
+    state.steps[id].format = { ...state.steps[id].format, status: interrupted ? 'INTERRUPTED' : 'FAILED', error: failure, ...(tail ? { stderrTail: tail } : {}), ...(rejectedArtifact ? { rejectedArtifact } : {}) };
+    event(sh, interrupted ? 'STEP_INTERRUPTED' : 'STEP_FAILED', node, { address: caddress, attempt, code: failure.code, message: failure.message });
+    if (began) await session.fail(caddress, { runId: state.runId, attempt, code: failure.code, message: failure.message, unknown: unknownEffect });
+    await sh.store.save(state);
+    error.step ??= `${displayAddress(address)} json`;
     error.stderrTail ??= tail;
     throw error;
   } finally {

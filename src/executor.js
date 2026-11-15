@@ -35,10 +35,12 @@ export function tailLines(text, count = STDERR_TAIL_LINES) {
 
 // Template tokens -> real argv. {prompt_file} is the saved file's absolute path; {prompt} is the
 // rendered prompt itself, or (when too long) a one-line instruction to read that file.
-export function buildArgv(template, prompt, promptFile) {
+export function buildArgv(template, prompt, promptFile, extras = {}) {
   const long = Buffer.byteLength(prompt, 'utf8') > MAX_INLINE_PROMPT_BYTES;
   return template.map(token => token.replace(PLACEHOLDER, match => {
     if (match === '{prompt_file}') return promptFile;
+    if (match === '{schema}') return extras.schema;
+    if (match === '{schema_file}') return extras.schemaFile;
     return long ? `Read and follow the instructions in the file: ${promptFile}` : prompt;
   }));
 }
@@ -55,7 +57,9 @@ export async function executePrompt(prompt, options) {
   const timeoutMs = options.timeoutMs ?? 300000;
   assertAwe(Number.isInteger(timeoutMs) && timeoutMs > 0, 'INVALID_EXECUTOR', 'timeoutMs must be a positive integer');
   if (needsPromptFile(template, prompt)) assertAwe(options.promptFile, 'INVALID_EXECUTOR', 'This command needs a prompt file but none was saved');
-  const argv = buildArgv(template, prompt, options.promptFile);
+  assertAwe(!template.some(token => token.includes('{schema}')) || options.schema !== undefined, 'INVALID_EXECUTOR', '{schema} is only available to the "formatter" command');
+  assertAwe(!template.some(token => token.includes('{schema_file}')) || options.schemaFile, 'INVALID_EXECUTOR', '{schema_file} is only available to the "formatter" command');
+  const argv = buildArgv(template, prompt, options.promptFile, { schema: options.schema, schemaFile: options.schemaFile });
   const viaStdin = !usesPlaceholder(template);
   return new Promise((resolve, reject) => {
     const child = spawn(argv[0], argv.slice(1), {
