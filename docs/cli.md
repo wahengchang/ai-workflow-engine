@@ -143,6 +143,25 @@ A stored result is reused only if all of this still holds:
   in the workflow (including the IF branch and LOOP iteration), and **the exact results it could see from earlier steps**;
 - the stored output and every saved output file still exist and match the recorded size and SHA-256.
 
+```text
+ for each step, in order, awe asks:
+
+  1. Is the cache being read?                  no  ──▶ RUN
+     (a named step: on · a whole run: off · --cache / --no-cache override)
+  2. Is it the step you named?                 yes ──▶ RUN    it always runs
+  3. Same fingerprint as the stored result?    no  ──▶ RUN    something it depends on changed
+  4. Stored output and files still there,      no  ──▶ RUN    CACHE_INVALID is recorded
+     same size and SHA-256?
+  5. All of the above passed                       ──▶ REUSE  no AI call
+
+ before every RUN, one more question:
+  Did its previous attempt leave an unknown outcome?
+     yes, and no --retry     ──▶ STOP: UNKNOWN_EFFECT
+     no, or --retry given    ──▶ run it; later steps that could see it become stale
+```
+
+*Figure: the questions awe asks, in order, before it reuses a stored result or runs a step.*
+
 | You change… | Effect |
 | --- | --- |
 | a step's prompt | that step and everything after it in order run again; earlier steps are kept |
@@ -265,6 +284,25 @@ A step receives exactly one thing: its own prompt, with `{{ … }}` filled in (i
 receive earlier steps' prompts or outputs, and the AI keeps no memory between steps. To use an earlier result, name it in
 the step's prompt: `{{ steps["1.1"].output }}` (the text) or `{{ steps["1.1"].artifact }}` (the file path).
 
+```text
+ step 1.1 output   ── {{ steps["1.1"].output }} ──────────────┐
+ awe.json "input"  ── {{ input.topic }} ──────────────────────┤
+ awe.json "common" ── {{ common }}  (only if written) ────────┤
+                                                              ▼
+                                                      1.2-outline.md   your prompt file
+                                                              │  awe fills in the {{ … }}
+                                                              ▼
+                                                      rendered prompt   the ONLY thing sent
+                                                              │
+                                                              ▼
+                                                        AI command   no memory of earlier steps
+                                                              │
+                                                              ▼
+                                                        1.2 output
+```
+
+*Figure: a step receives only its own rendered prompt. Earlier results, `input` and `common` reach it only through the `{{ ... }}` references you write.*
+
 ## Workflow files
 
 Unchanged: numbered `N.N-name.md` prompts, `FLOW.json` for `parallel` / `if` /
@@ -361,6 +399,32 @@ For a step that declares `"json"`, awe runs **one more command call**, right aft
 2. awe runs the **formatter** with a fixed, built-in prompt (the rules, your declaration as a JSON Schema, and the step's text
    between `--- TEXT START ---` / `--- TEXT END ---`). The prompt cannot be changed: one wording means every tool behaves alike;
 3. the formatter's output must be JSON **only** and must fit the declaration. Then the step is done, and `.json` is available.
+
+```text
+       awe                      step command                formatter command
+        │                             │                             │
+        │ rendered prompt (plain prose, never mentions JSON)        │
+        ├────────────────────────────▶│                             │
+        │                             │                             │
+        │ the step text (finished + cached)                         │
+        │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤                             │
+        │                             │                             │
+        │ built-in prompt + your declaration + the text             │
+        ├──────────────────────────────────────────────────────────▶│
+        │                             │                             │
+        │ reply                       │                             │
+        │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤
+ ╌╌ JSON only, and it fits the declaration ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+        │ [ the step is done; steps["1.1"].json is available ]      │
+ ╌╌ not JSON, or it does not fit ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+        │ [ OUTPUT_NOT_JSON / OUTPUT_JSON_INVALID ]                 │
+        │                             │                             │
+        │ [ the run stops, no later step starts ]                   │
+        │                             │                             │
+        │ [ awe run --cache reruns only the formatter ]             │
+```
+
+*Figure: a step with a `json` declaration costs one extra formatter call, and a bad answer stops the run right there.*
 
 `awe run` lists the formatter under its step, so its time, whether it came from the cache, and its own failure are visible:
 
@@ -482,6 +546,20 @@ Writes happen in a fixed order so that a crash can never produce a result that l
 4. The attempt is recorded in the run's `state.json`.
 5. A single atomic file replace commits the result to the cache. Only this makes it reusable.
 
+```text
+ 1  intent saved .......... the previous result is retired
+ │                          ┐
+ 2  command runs ........... │  A stop anywhere in here (crash, kill, power loss)
+ │                          │  leaves the outcome UNKNOWN. The next run stops with
+ 3  output + files ......... │  UNKNOWN_EFFECT, and you resolve it with:
+ │  written                 │      awe run --cache --retry 1.2
+ 4  state.json recorded .... ┘
+ │
+ 5  atomic commit .......... the result is now reusable (only this step makes it so)
+```
+
+*Figure: the write order. A stop anywhere before step 5 can never leave a result that looks valid; it leaves an unknown outcome you resolve with `--retry`.*
+
 One `awe run` uses the cache at a time; a second one fails with `CACHE_BUSY` (the lock of a dead process on the same host
 is taken over automatically).
 
@@ -497,6 +575,40 @@ awe run --cache --retry 1.2
 `--retry` lets that one step run once. A plain non-zero exit is a known failure and needs no `--retry`; a command killed by
 a signal is not (its error says `terminated by signal …`). A run that a crash left unfinished is marked `FAILED`
 (`RUN_ABANDONED`) the next time the cache is opened.
+
+```text
+ [stored result is valid] ──▶ REUSED
+
+ [has to run] ──▶ RUNNING
+                    │
+                    ├──▶ COMPLETED   result committed; later steps can reuse it
+                    │
+                    ├──▶ FAILED      command exited non-zero (a known failure)
+                    │      └── fix it, then `awe run` again ──▶ RUNNING
+                    │
+                    └──▶ UNKNOWN OUTCOME   timeout, signal or Ctrl-C while the command ran
+                           │               (saved as FAILED / INTERRUPTED, marked unknown)
+                           │               a plain `awe run` now stops: UNKNOWN_EFFECT
+                           └── check what it changed, then `awe run --retry STEP` ──▶ RUNNING
+```
+
+*Figure: the life of one step attempt. A step killed or timed out is saved as `INTERRUPTED` / `FAILED` and marked unknown; awe will not resend it until you pass `--retry`.*
+
+```text
+ awe run starts
+      │
+      ▼
+   RUNNING ──── every step finished ─────────────────▶ COMPLETED    exit 0
+      │
+      ├─────── a step failed ────────────────────────▶ FAILED       exit 1
+      │
+      ├─────── SIGINT / SIGTERM / SIGHUP ────────────▶ INTERRUPTED  exit 130 / 143 / 129
+      │
+      └─────── the process crashed ──▶ stays RUNNING on disk, then is marked
+                                       FAILED (RUN_ABANDONED) the next time the cache is opened
+```
+
+*Figure: the status of a whole run, with the exit code `awe run` returns.*
 
 ## What is stored
 

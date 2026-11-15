@@ -21,6 +21,28 @@
 - `awe run --dry` renders prompts only (`src/dry.js`): it never starts a command, writes no run and no cache, and shows upstream results as placeholders. It cannot evaluate IF/LOOP gates, so it shows every branch and one loop pass.
 - `awe.json` marks the workflow root. Its optional `common` text (string or lines) is reusable text, not a preamble: a prompt includes it only where it writes `{{ common }}`, and the prompt a step sends is its own file, rendered, with nothing added (`runtime.js`). `common` is rendered once per use with `input` only, and is a fingerprint part only of the steps that use it; a change is reported per step as `(the common text changed)`. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose. The v0.1 `ENTRY.md` is no longer read: a leftover one only produces a warning (`src/entry.js`).
 
+```text
+    upstream results
+          │ copy (snapshot)
+    ┌─────┴─────┐
+    ▼           ▼
+ branch A    branch B        each works on its own copy
+    │           │
+    └─────┬─────┘
+          ▼
+   JOIN BARRIER: wait for ALL branches
+          │
+          ├── a branch failed ──▶ run fails, nothing is published
+          │                       (branches that finished stay cached)
+          │
+          ├── two branches wrote the same step id ──▶ PARALLEL_COLLISION
+          │
+          └── all succeeded ──▶ publish only the entries that changed
+                                from the snapshot, then later steps run
+```
+
+*Figure: a parallel group forks a snapshot, waits for every branch (the join barrier), then publishes only what changed.*
+
 ## Variable grammar
 
 Supported placeholders: `{{ input.topic }}`, `{{ steps["1.2"].output }}`, `{{ steps["1.2"].artifact }}`. The output reference inserts full text; the artifact reference inserts a file path. Use `artifact` for large material. No arbitrary JavaScript evaluation.
@@ -34,6 +56,77 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 ## Interfaces
 
 `awe` CLI (`src/cli.js`: parsing, output) → Entry Loader (`entry.js`, `config.js`) → Directory Resolver (`discover.js`) → preflight (`template.js`, `preflight.js`) → engine (`engine.js`: walk, fingerprints, reuse) → executor (`executor.js`, `command.js`) → RunStore / cache (`storage.js`, `cache.js`). `awe show` (`show.js`) reads run state; `awe check` reuses the preflight and looks executables up on PATH (`which.js`).
+
+```text
+ awe CLI        cli.js                      parse flags, print results
+   │
+   ▼
+ Load           entry.js, config.js         find awe.json, read settings
+                discover.js                 numbered folders become the plan
+   │
+   ▼
+ Check          template.js, preflight.js   catch mistakes before any AI call
+   │
+   ▼
+ Engine         engine.js                   walk the plan, fingerprint, reuse or run
+   │
+   ├──▶ Executor   executor.js, command.js  start the AI command (no shell)
+   │
+   └──▶ Storage    storage.js               run state          ┐
+                   cache.js                 result cache       ├ under .awe/
+                   outputs.js               declared files     ┘
+
+ Other commands reuse parts of the same stack:
+   awe show        show.js reads the run state in .awe/
+   awe check       the Check layer, plus which.js looks executables up on PATH
+   awe run --dry   dry.js renders prompts only; it never reaches Executor or Storage
+```
+
+*Figure: where each `src/` file sits in a run. `awe show`, `awe check` and `awe run --dry` reuse parts of the same stack.*
+
+```text
+     You          cli.js        engine.js      cache.js      AI command        .awe/
+      │              │              │              │              │              │
+      │ awe run 1.2  │              │              │              │              │
+      ├─────────────▶│              │              │              │              │
+      │              │              │              │              │              │
+      │              │ [ validate first (preflight) ]             │              │
+      │              │              │              │              │              │
+      │              │ run the plan │              │              │              │
+      │              ├─────────────▶│              │              │              │
+      │              │              │              │              │              │
+      │              │              │ open session + lock         │              │
+      │              │              ├─────────────▶│              │              │
+ ╌╌ for each step, in order ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+      │              │              │ stored result valid?        │              │
+      │              │              ├─────────────▶│              │              │
+      │              │              │              │              │              │
+      │              │              │ yes: reuse it, no AI call   │              │
+      │              │              │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┤              │              │
+ ╌╌ otherwise (or the step you named) ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+      │              │              │ save intent  │              │              │
+      │              │              ├─────────────▶│              │              │
+      │              │              │              │              │              │
+      │              │              │ rendered prompt             │              │
+      │              │              ├────────────────────────────▶│              │
+      │              │              │              │              │              │
+      │              │              │ stdout = step result        │              │
+      │              │              │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┤              │
+      │              │              │              │              │              │
+      │              │              │ write artifact + state      │              │
+      │              │              ├───────────────────────────────────────────▶│
+      │              │              │              │              │              │
+      │              │              │ commit result│              │              │
+      │              │              ├─────────────▶│              │              │
+ ╌╌ after the last step ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+      │              │ run state    │              │              │              │
+      │              │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┤              │              │              │
+      │              │              │              │              │              │
+      │ summary + next command      │              │              │              │
+      │◀┄┄┄┄┄┄┄┄┄┄┄┄┄┤              │              │              │              │
+```
+
+*Figure: one `awe run`, from the command line to the saved result.*
 
 ## Security and compatibility
 

@@ -6,6 +6,24 @@
 > have called an AI: without a configured command, `awe run` stops and tells you how to set one; `awe run --dry` previews
 > the prompts. This is not yet a durable, production-ready workflow service.
 
+```text
+  Your workflow folder                  awe run                         Your AI CLI
+ ┌─────────────────────────────┐   ┌───────────────────────────┐   ┌───────────────────────┐
+ │ awe.json                    │   │ fills in the variables    │   │ claude   -p {prompt}  │
+ │   inputs + the AI command   │   │ runs steps in numeric     │   │ codex    exec …       │
+ │ 1.1-research.md             │──▶│ order                     │──▶│ opencode run …        │
+ │ 1.2-outline.md   (prompts)  │   │                           │◀──│ omp      -p           │
+ │ FLOW.json        (optional) │   └─────────────┬─────────────┘   └───────────────────────┘
+ └─────────────────────────────┘                 │ saves every result
+                                                 ▼
+                       .awe/   outputs · rendered prompts · cache · run state
+                                                 │
+                                                 ▼  awe show 1.2
+                                                you
+```
+
+*Figure: awe reads your folder, sends one rendered prompt per step to the AI command you configured, and saves every result under `.awe/`.*
+
 ## Installation: CLI vs Agent Skill
 
 **Engine installation and Skill installation are two separate actions.** The CLI executes workflows; the Skill only teaches compatible AI agents to call that already-installed CLI. AWE requires Node.js 20+; the independently maintained Skills CLI has its own Node requirements.
@@ -36,6 +54,29 @@ awe run 1.1         # run step 1.1, then look at it:  awe show 1.1
 awe run 1.2         # 1.1 comes from the cache, only 1.2 runs
 awe run             # the whole workflow, from the start
 ```
+
+```text
+ awe init coffee          create the workflow
+        │
+        ▼
+ awe run --dry            preview every prompt (calls no AI)
+        │
+        ▼
+ awe run 1.1  ◀────────┐  run one step
+        │              │
+        ▼              │
+ awe show 1.1          │  read the output
+        │              │
+        ├─ not happy ──┘  edit 1.1-research.md, then run it again
+        │
+        ▼ happy
+ awe run 1.2              1.1 comes from the cache, only 1.2 runs
+        │
+        ▼
+ awe run                  the whole workflow, from the start
+```
+
+*Figure: the everyday loop. Run one step, read it, edit the prompt, run it again; run the whole workflow only when it is ready.*
 
 The AI command is one line in `awe.json`:
 
@@ -68,9 +109,54 @@ my-content-workflow/
     └── 3.2-deliver.md
 ```
 
+```text
+ stage-1-research     1.1 topic-research
+                              │
+                              ▼
+                          1.2 outline
+                              │
+ stage-2-writing              ▼
+                          2.1 draft
+                              │
+ stage-3-review      ┌────────┴────────┐        3.1-checks has FLOW.json:
+                     ▼                 ▼        { "type": "parallel" }
+              3.1.1 facts    3.1.2 editorial    both run at the same time
+                     │                 │
+                     └────────┬────────┘
+                              ▼
+                        3.2 deliver             starts after both have finished
+```
+
+*Figure: how the example folder above executes: numeric order, with the two checks in `3.1-checks` running in parallel.*
+
 All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches; a folder with no numbered prompts or `FLOW.json` (scratch space a step created) is ignored. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
 
 ### Flow syntax
+
+```text
+sequence  (a plain folder)
+    step 1 ──▶ step 2 ──▶ step 3
+
+parallel  ("type": "parallel")
+              ┌──▶ branch A ──┐
+    start ────┤               ├──▶ join: wait for every branch
+              └──▶ branch B ──┘
+
+if  ("type": "if")
+                      yes ──▶ "then" folder
+    test == equals ?
+                      no  ──▶ "else" folder
+
+loop  ("type": "loop", "maxIterations": N)
+        ┌──────────────────────────── no, rounds left ───────────────┐
+        ▼                                                             │
+    run the steps inside ──▶ until == equals ? ───────────────────────┘
+                                │ yes                  │ no, N rounds used
+                                ▼                      ▼
+                            continue            run fails (LOOP_EXHAUSTED)
+```
+
+*Figure: the four group types. A plain folder is a `sequence`; the others need a `FLOW.json`.*
 
 ```json
 { "type": "parallel" }
