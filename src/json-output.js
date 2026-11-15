@@ -21,7 +21,10 @@ export function normalizeJsonDeclaration(value, where) {
   const check = (schema, at) => {
     if (!isPlainObject(schema)) throw bad(`${at} must be an object`);
     for (const key of Object.keys(schema)) {
-      if (!KEYWORDS.includes(key)) throw bad(`${at} has unsupported key "${key}". Supported: ${KEYWORDS.join(', ')}`);
+      if (!KEYWORDS.includes(key)) {
+        const hint = key === 'file' && at === '"json"' ? ' To save the JSON as a file, write "jsonFile": "output/name.json" next to "json" in the same step, not inside it.' : '';
+        throw bad(`${at} has unsupported key "${key}". Supported: ${KEYWORDS.join(', ')}.${hint}`);
+      }
     }
     if (schema.type !== undefined) {
       const types = Array.isArray(schema.type) ? schema.type : [schema.type];
