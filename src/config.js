@@ -124,11 +124,14 @@ export function resolveExecutor(settings, stepId, overrides = {}, root) {
 }
 
 // The command that turns the text of a step that declares "json" into JSON.
-// Priority: steps.<id>.formatter > top-level "formatter" > "run". The prompt is built in; the command may use
-// {prompt}, {prompt_file}, {schema} (the declaration as JSON text) and {schema_file} (a file holding it).
+// Priority: steps.<id>.formatter > top-level "formatter" > "run" > the step's own executor. The prompt is built
+// in; the command may use {prompt}, {prompt_file}, {schema} (the declaration as JSON text) and {schema_file}
+// (a file holding it).
 export function resolveFormatter(settings, stepId, overrides = {}, root) {
   const base = settings.steps[stepId]?.formatter ?? settings.formatter ?? settings.run;
-  if (!base) throw noExecutorError(settings);
+  // No formatter and no "run": the step's own command answers in prose and makes the JSON, which is how
+  // per-step executors keep working (and what library callers get when they pass no resolveFormatter).
+  if (!base) return { ...resolveExecutor(settings, stepId, overrides, root), name: 'formatter' };
   const timeoutMs = overrides.timeoutSeconds !== undefined ? Math.round(overrides.timeoutSeconds * 1000)
     : settings.steps[stepId]?.timeoutMs ?? settings.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
   return { name: 'formatter', argv: base.argv, display: displayCommand(base.argv, root), timeoutMs };

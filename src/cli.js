@@ -242,12 +242,13 @@ async function checkCommand({ dir, flags }, cwd) {
   // The formatter of each step that declares "json" (several steps may share one command).
   const formatters = new Map();
   for (const id of jsonSteps) {
-    const argv = (entry.settings.steps[id]?.formatter ?? entry.settings.formatter ?? entry.settings.run)?.argv;
-    if (!argv) { formatters.set(`none:${id}`, { name: 'formatter', steps: [id], display: null, executable: null, found: null }); continue; }
-    const display = resolveFormatter(entry.settings, id, {}, entry.root).display;
-    const known = formatters.get(display) ?? { name: 'formatter', steps: [], display, executable: argv[0], found: await findExecutable(argv[0], { cwd: entry.root }) };
+    let spec;
+    // Normally the formatter is configured; the step's own executor is the fallback. Neither: report it below.
+    try { spec = resolveFormatter(entry.settings, id, {}, entry.root); } catch { spec = null; }
+    if (!spec) { formatters.set(`none:${id}`, { name: 'formatter', steps: [id], display: null, executable: null, found: null }); continue; }
+    const known = formatters.get(spec.display) ?? { name: 'formatter', steps: [], display: spec.display, executable: spec.argv[0], found: await findExecutable(spec.argv[0], { cwd: entry.root }) };
     known.steps.push(id);
-    formatters.set(display, known);
+    formatters.set(spec.display, known);
   }
   used.push(...formatters.values());
   const problems = used.filter(item => !item.display || !item.found);
@@ -332,7 +333,7 @@ function nextHint(state, promptIds, entry, overrides) {
   if (failed.endsWith(' json')) {
     const stepId = failed.slice(0, -' json'.length).split('@')[0];
     if (state.error.code === 'EXECUTOR_TIMEOUT') {
-      const current = resolveFormatter(entry.settings, stepId, overrides).timeoutMs;
+      const current = resolveFormatter(entry.settings, stepId, overrides, entry.root).timeoutMs;
       return `awe run --cache --timeout ${Math.ceil(seconds(current) * 2)}${retry}    (formatter limit now ${seconds(current)}s)   ·   awe show ${failed.replace(' json', '')} --err`;
     }
     if (state.error.code === 'UNKNOWN_EFFECT') return null;

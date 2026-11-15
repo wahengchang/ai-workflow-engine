@@ -382,8 +382,9 @@ Set it once, at the top level of `awe.json`, written like `run`; a step can over
 ```
 
 Precedence: `steps.<id>.formatter` → top-level `formatter` → `run`. Without a `formatter`, the `run` command is used, so it
-works out of the box. The formatter has the same `{prompt}`, `{prompt_file}` and stdin rules as `run`, plus two placeholders
-that only it has:
+works out of the box. If `awe.json` has no `run` either, the step's own executor makes its JSON (a step that names an
+executor is not asked to configure a second command). The formatter has the same `{prompt}`, `{prompt_file}` and stdin rules
+as `run`, plus two placeholders that only it has:
 
 | Placeholder | Value |
 | --- | --- |

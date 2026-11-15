@@ -183,6 +183,10 @@ test('formatter settings: a command string, per-step override, falls back to run
   assert.equal(resolveFormatter(set, '1.2').display, 'c {schema_file} {prompt}', 'the step wins over the top level');
   assert.equal(resolveFormatter(set, '1.1', { timeoutSeconds: 7 }).timeoutMs, 7000);
   assert.equal(resolveFormatter(settings({ run: 'a', timeout: 9, ...withJson }), '1.1').timeoutMs, 9000);
+  // No formatter and no "run": the step's own command answers in prose and makes the JSON.
+  const perStep = settings({ executors: { codex: 'codex exec {prompt}' }, steps: { '1.1': { json: true, executor: 'codex' } } });
+  assert.equal(resolveFormatter(perStep, '1.1').display, 'codex exec {prompt}');
+  assert.equal(resolveFormatter(settings({ executors: { codex: 'x' }, steps: { '1.1': { json: true } } }), '1.1', { executor: 'codex' }).display, 'x', 'a --executor override reaches it too');
   assert.throws(() => resolveFormatter(settings({}), '1.1'), { code: 'NO_EXECUTOR' });
   const rejects = (config, pattern) => assert.throws(() => settings(config), error => error.code === 'INVALID_CONFIG' && pattern.test(error.message), JSON.stringify(config));
   rejects({ formatter: 5 }, /"formatter" must be a command string/);
@@ -191,6 +195,21 @@ test('formatter settings: a command string, per-step override, falls back to run
   rejects({ steps: { '1.1': { json: true, formatter: 5 } } }, /\.formatter must be a command string/);
   rejects({ run: 'a {schema}' }, /\{schema\} and \{schema_file\} are only for "formatter" commands/);
   rejects({ executors: { x: 'a {schema_file}' } }, /only for "formatter" commands/);
+});
+
+test('without "formatter" or "run", a step\'s own executor makes its JSON', async t => {
+  // One command for both jobs: prose when it is asked for the step, JSON when the formatter's built-in prompt
+  // (which carries the TEXT markers) is what it receives.
+  const script = "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>process.stdout.write(s.includes('TEXT START')?'{\"a\":1}':'prose answer'))";
+  const mock = [process.execPath, '-e', script].map(token => JSON.stringify(token)).join(' ');
+  const ws = await workspace(t, { '1.1-a.md': 'Tell me about a', '1.2-b.md': 'Got {{ steps["1.1"].json.a }}\nOUTPUT::done' });
+  // Executors only: each step names its command, and there is no top-level "run" to fall back to.
+  await put(ws.dir, 'awe.json', JSON.stringify({ version: 2, executors: { mock }, steps: { '1.1': { json: true, executor: 'mock' }, '1.2': { executor: 'mock' } } }));
+  assert.match((await cli(['check', ws.dir], ws.dir)).output, /^Executor {2}formatter \(JSON of 1\.1\): /m);
+  const state = await run(ws);
+  assert.equal(state.status, 'COMPLETED', JSON.stringify(state.error));
+  assert.equal(state.steps['1.1'].outputPreview, 'prose answer', '.output stays the prose');
+  assert.equal(await readFile(state.steps['1.1'].format.artifact, 'utf8'), '{"a":1}');
 });
 
 // ── a step and its formatter ────────────────────────────────────────────────

@@ -57,11 +57,11 @@ existing configuration:
 ```
 
 1. The formatter command is top-level `formatter` (a step can override it with `steps.<id>.formatter`; without any it is
-   `run`). It has `{prompt}`, `{prompt_file}` and stdin like `run`, plus `{schema}` (the declaration as JSON text) and
-   `{schema_file}` (a file with it) for a tool's own structured-output flag (claude `--json-schema`, codex
-   `--output-schema`; opencode and omp have no such flag, so the built-in prompt does the work). The flags are optional: awe
-   does the checking. The formatter prompt is fixed and cannot be changed. Ask the user which command to use; it costs one more
-   call per declared step.
+   `run`, and without a `run` the step's own executor). It has `{prompt}`, `{prompt_file}` and stdin like `run`, plus
+   `{schema}` (the declaration as JSON text) and `{schema_file}` (a file with it) for a tool's own structured-output flag
+   (claude `--json-schema`, codex `--output-schema`; opencode and omp have no such flag, so the built-in prompt does the
+   work). The flags are optional: awe does the checking. The formatter prompt is fixed and cannot be changed. Ask the
+   user which command to use; it costs one more call per declared step.
 2. Declare what consumers need. Supported keywords: `type`, `minItems`, `maxItems`, `items`, `required`, `properties`,
    `additionalProperties`, `enum`, `description` (a hint for the formatter); anything else is a configuration error.
 3. Read values with `{{ steps["1.1"].json.title }}` / `{{ steps["1.1"].json[0].role }}`. Paths support `.key`, `[0]`, `["key"]`,
