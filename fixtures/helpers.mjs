@@ -8,9 +8,14 @@ import { cli } from '../src/cli.js';
 export const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 export const agent = path.join(projectRoot, 'fixtures', 'agent.cjs');
 export const flow = JSON.stringify;
+export const formatter = path.join(projectRoot, 'fixtures', 'formatter.cjs');
+export const schemaEcho = path.join(projectRoot, 'fixtures', 'schema-echo.cjs');
 
 // A command string for awe.json "run": node <agent> <log> [extra args], quoted for splitCommand.
 export const agentCommand = (log, extra = []) => [process.execPath, agent, log, ...extra].map(token => JSON.stringify(token)).join(' ');
+
+// A command string for awe.json "formatter": fixtures/formatter.cjs <log> [extra args].
+export const formatterCommand = (log, extra = []) => [process.execPath, formatter, log, ...extra].map(token => JSON.stringify(token)).join(' ');
 
 // A temporary workflow plus the call log its fake agent writes. awe.json already points at the agent.
 export async function workspace(t, files = {}, config = {}) {

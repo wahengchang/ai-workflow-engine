@@ -8,29 +8,25 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch cancels the run in flight: superseded commits cost nothing.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   test:
-    name: Node ${{ matrix.node }} / ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest, node: 20 }
-          - { os: ubuntu-latest, node: 22 }
-          - { os: ubuntu-latest, node: 24 }
-          - { os: macos-latest, node: 22 }
-          - { os: windows-latest, node: 22 }
+    # One job on purpose: Actions minutes are a limited resource here, so the gate is the cheapest
+    # combination that still exercises both scripts. The 20/24, macOS and Windows matrix was dropped;
+    # run those locally when a change touches paths, child processes or prompt-size limits
+    # (docs/maintenance.md#automated-pr-gate says when).
+    name: check (Linux, Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
       - name: Unit and regression tests
         run: npm run check
       - name: Package / installed CLI / Agent Skill smoke test

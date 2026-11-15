@@ -23,8 +23,8 @@ export class RunStore {
     });
     await this.pending;
   }
-  async artifact(stepId, attempt, content, { exclusive = false } = {}) {
-    const filename = `${stepId.replaceAll('.', '-')}-attempt-${attempt}.md`;
+  async artifact(stepId, attempt, content, { exclusive = false, kind = '' } = {}) {
+    const filename = `${stepId.replaceAll('.', '-')}${kind ? `-${kind}` : ''}-attempt-${attempt}.md`;
     const file = path.join(this.dir, 'artifacts', filename);
     // exclusive: never replace an earlier attempt's artifact.
     await writeFile(file, content, { encoding: 'utf8', flag: exclusive ? 'wx' : 'w' });
@@ -34,8 +34,14 @@ export class RunStore {
   fileDir(stepId, attempt) {
     return path.join(this.dir, 'artifacts', 'files', stepId.replaceAll('.', '-'), `attempt-${attempt}`);
   }
-  async prompt(stepId, attempt, content) {
-    const file = path.join(this.dir, 'artifacts', `prompt-${stepId.replaceAll('.', '-')}-attempt-${attempt}.md`);
+  // The declaration a formatter has to satisfy, as a file for commands that take one (--output-schema).
+  async schema(stepId, attempt, text) {
+    const file = path.join(this.dir, 'artifacts', `schema-${stepId.replaceAll('.', '-')}-attempt-${attempt}.json`);
+    await writeFile(file, text, 'utf8');
+    return file;
+  }
+  async prompt(stepId, attempt, content, kind = '') {
+    const file = path.join(this.dir, 'artifacts', `prompt-${stepId.replaceAll('.', '-')}${kind ? `-${kind}` : ''}-attempt-${attempt}.md`);
     await writeFile(file, content, 'utf8');
     return file;
   }

@@ -80,6 +80,8 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
   const seen = new Set();
   const ignoredEntries = [];
   const rootReal = await realpath(root);
+  // `relative` is what people read and what cache addresses and fingerprints are built from, so it always
+  // uses "/", never the platform separator (a workflow cached on Windows is the same workflow on Linux).
   async function scan(dir, relative, enforceNumbered = true) {
     // Do not follow directory symlinks: a workflow must not escape its root while being discovered.
     const entries = await readdir(dir, { withFileTypes: true });
@@ -91,14 +93,14 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       validConfig(flow, relative || '.');
     }
     const children = [];
-    if (relative && entries.some(e => e.name === 'awe.json' && e.isFile())) ignoredEntries.push(path.join(relative, 'awe.json'));
+    if (relative && entries.some(e => e.name === 'awe.json' && e.isFile())) ignoredEntries.push(path.posix.join(relative, 'awe.json'));
     let sorted = entries.filter(e => e.isFile() || e.isDirectory()).filter(e => e.name !== 'FLOW.json');
     // Generated files are not workflow structure. Skip (1) a declared output file itself, whatever
     // it is called, and (2) a directory on the way to one unless it is real structure: a numbered
     // step/stage directory or a branch of this IF. This runs before any IF validation below.
     const branchNames = flow.type === 'if' ? [flow.then, flow.else] : [];
     sorted = sorted.filter(e => {
-      const location = path.join(relative, e.name).split(path.sep).join('/');
+      const location = path.posix.join(relative, e.name);
       if (outputs.includes(location)) return false;
       if (!e.isDirectory() || !outputs.some(declared => declared.startsWith(`${location}/`))) return true;
       return numbered.test(e.name) || stageDir.test(e.name) || branchNames.includes(e.name);
@@ -110,7 +112,7 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
       for (const branch of branches) {
         const e = sorted.find(e => e.name === branch && e.isDirectory());
         assertAwe(Boolean(e), 'INVALID_FLOW', `Missing IF branch: ${branch}`);
-        const tree = await scan(path.join(dir, branch), path.join(relative, branch), false);
+        const tree = await scan(path.join(dir, branch), path.posix.join(relative, branch), false);
         children.push({ ...tree, branch });
       }
       assertAwe(sorted.every(e => branches.includes(e.name)), 'INVALID_FLOW', `Unexpected files in IF group ${relative}`);
@@ -125,24 +127,24 @@ export async function discoverWorkflow(root, { outputs = [] } = {}) {
     for (const entry of sorted.sort(comparePos)) {
       if (entry.isFile()) {
         const match = numbered.exec(entry.name);
-        assertAwe(Boolean(match), 'INVALID_STEP', `Prompt must have numeric prefix: ${path.join(relative, entry.name)}`);
+        assertAwe(Boolean(match), 'INVALID_STEP', `Prompt must have numeric prefix: ${path.posix.join(relative, entry.name)}`);
         const id = match[1];
         assertAwe(!seen.has(id), 'DUPLICATE_STEP', `Duplicate step number ${id}`);
         seen.add(id);
-        children.push({ type: 'prompt', id, relative: path.join(relative, entry.name), file: path.join(dir, entry.name) });
+        children.push({ type: 'prompt', id, relative: path.posix.join(relative, entry.name), file: path.join(dir, entry.name) });
       } else if (entry.isDirectory()) {
         const match = numbered.exec(entry.name);
         const stage = stageDir.exec(entry.name);
         if (!match && !stage && enforceNumbered && !(await holdsWorkflowContent(path.join(dir, entry.name)))) continue; // scratch folder, not workflow
         if (!match && !stage && enforceNumbered && /^\d+(?:\.\d+)+$/.test(entry.name)) {
-          throw new AweError('INVALID_STEP', `Directory ${path.join(relative, entry.name)} needs a name after its number, for example ${entry.name}-fan (folders and prompts are named N.N-name)`);
+          throw new AweError('INVALID_STEP', `Directory ${path.posix.join(relative, entry.name)} needs a name after its number, for example ${entry.name}-fan (folders and prompts are named N.N-name)`);
         }
-        assertAwe(Boolean(match || stage || !enforceNumbered), 'INVALID_STEP', `Directory needs a numeric prefix or stage-N name: ${path.join(relative, entry.name)}. It contains workflow files, so rename it (for example ${/^\d+$/.test(entry.name) ? `stage-${entry.name}` : `stage-1-${entry.name}`}); a folder with no numbered prompts or FLOW.json is ignored`);
+        assertAwe(Boolean(match || stage || !enforceNumbered), 'INVALID_STEP', `Directory needs a numeric prefix or stage-N name: ${path.posix.join(relative, entry.name)}. It contains workflow files, so rename it (for example ${/^\d+$/.test(entry.name) ? `stage-${entry.name}` : `stage-1-${entry.name}`}); a folder with no numbered prompts or FLOW.json is ignored`);
         if (match) {
           assertAwe(!seen.has(match[1]), 'DUPLICATE_STEP', `Duplicate step number ${match[1]}`);
           seen.add(match[1]);
         }
-        const tree = await scan(path.join(dir, entry.name), path.join(relative, entry.name));
+        const tree = await scan(path.join(dir, entry.name), path.posix.join(relative, entry.name));
         tree.id = match?.[1];
         children.push(tree);
       }

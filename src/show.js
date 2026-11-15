@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { AweError } from './errors.js';
-import { displayAddress } from './engine.js';
+import { displayAddress, isFormatAddress } from './engine.js';
 
 const RUN_ID = /^[\w-]+$/;
 
@@ -53,8 +53,10 @@ const firstLine = text => String(text).split('\n', 1)[0];
 export function renderSteps(state, root) {
   const rel = file => (file ? path.relative(root, file) : '');
   const lines = [];
+  const width = (state.invocations ?? []).some(item => isFormatAddress(item.address)) ? 8 : 7;
   for (const item of state.invocations ?? []) {
-    const name = displayAddress(item.address).padEnd(7);
+    // A step's formatter is listed right under it: its time, whether it came from the cache, and its own failure.
+    const name = (isFormatAddress(item.address) ? `${displayAddress(item.address)} json` : displayAddress(item.address)).padEnd(width);
     if (item.action === 'REUSED') {
       lines.push(`  ${name} cached   ${clock(item.from?.at ?? '')}`.trimEnd());
     } else if (item.status === 'COMPLETED') {
@@ -67,7 +69,7 @@ export function renderSteps(state, root) {
       // (A command's own failure is not repeated: its stderr is printed below.)
       const more = String(item.error?.message ?? '').split('\n').slice(1);
       if (more.length && !String(item.error?.code ?? '').startsWith('EXECUTOR_')) lines.push(indent(more.join('\n'), 10));
-      if (item.rejectedArtifact) lines.push(indent(`The model's raw output is saved in ${rel(item.rejectedArtifact)}`, 10));
+      if (item.rejectedArtifact) lines.push(indent(`The formatter's output is saved in ${rel(item.rejectedArtifact)}`, 10));
       if (item.stderrTail) {
         // The failure message already quotes the start of stderr; do not print that line twice.
         const tail = item.stderrTail.split('\n');
@@ -83,9 +85,12 @@ const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 // One vocabulary: when a LOOP made some step run more than once, the counts are runs of a step, not steps.
 export function countsLine(state) {
   const items = state.invocations ?? [];
-  const repeats = items.length > new Set(items.map(item => item.step)).size;
+  const steps = items.filter(item => item.kind !== 'format');
+  const formats = items.filter(item => item.kind === 'format').length;
+  const repeats = steps.length > new Set(steps.map(item => item.step)).size;
   const word = repeats ? 'step run' : 'step';
-  return `Reused ${plural(state.reused ?? 0, word)} · Ran ${plural(state.executed ?? 0, word)}${repeats ? '   (a step inside a loop counts once per iteration)' : ''}`;
+  const notes = [repeats ? 'a step inside a loop counts once per iteration' : '', formats ? `${plural(formats, 'JSON formatter run')} included` : ''].filter(Boolean);
+  return `Reused ${plural(state.reused ?? 0, word)} · Ran ${plural(state.executed ?? 0, word)}${notes.length ? `   (${notes.join('; ')})` : ''}`;
 }
 
 export function cacheLine(state) {
@@ -107,21 +112,34 @@ async function originOf(root, record) {
   try {
     const source = await loadRun(root, record.reused.runId);
     const origin = source.steps?.[record.step ?? ''] ?? null;
-    return origin ? { ...origin, reused: record.reused } : record;
+    return origin ? { ...origin, reused: record.reused, ...(record.format ? { format: record.format } : {}) } : record;
   } catch {
     return record;
   }
 }
 
-// A rejected JSON answer is still inspectable output. Prefer that attempt over an older success.
+// A rejected answer is still inspectable output. Prefer that attempt over an older success. (Runs from awe 0.2.x
+// builds that checked JSON on the step itself recorded it here; the formatter now records it under .format.)
 const outputArtifact = record => record.status === 'COMPLETED' ? record.artifact : record.rejectedArtifact;
+
+const readText = async file => (await readFile(file, 'utf8')).trimEnd();
+const section = (title, text) => `── ${title} ──\n${text}`;
+
+// A step that declares "json" has a second record: its formatter. `awe show 1.1` prints the step's own text,
+// then what the formatter made of it (or why there is none).
+async function formatSection(format) {
+  if (!format) return null;
+  if (format.status === 'COMPLETED' && format.artifact) return section('json', await readText(format.artifact));
+  if (format.rejectedArtifact) return section(`json (rejected: ${firstLine(format.error?.message ?? '')})`, await readText(format.rejectedArtifact));
+  return section('json', `(not available: the formatter ${String(format.status ?? 'did not run').toLowerCase()}${format.error ? `, ${firstLine(format.error.message)}` : ''})`);
+}
 
 // `awe show 1.1.1@2`: one LOOP occurrence, found among the invocations a run recorded.
 async function occurrenceOf(root, states, step, wanted, need) {
   const seen = new Set();
   for (const state of states) {
     for (const item of [...(state.invocations ?? [])].reverse()) {
-      if (item.step !== step) continue;
+      if (item.step !== step || item.kind === 'format') continue;
       const shown = displayAddress(item.address);
       seen.add(shown);
       if (shown !== wanted) continue;
@@ -130,7 +148,11 @@ async function occurrenceOf(root, states, step, wanted, need) {
         const source = await loadRun(root, item.from.runId).catch(() => null);
         record = source?.invocations?.find(other => other.address === item.address && other.attempt === item.from.attempt && other.action === 'EXECUTED') ?? item;
       }
-      if (need === 'text' ? outputArtifact(record) : need === 'prompt' ? record.prompt : true) return { runId: state.runId, record };
+      if (need === 'text' ? outputArtifact(record) : need === 'prompt' ? record.prompt : true) {
+        // The formatter of the same occurrence, if the step declares JSON.
+        const format = [...(state.invocations ?? [])].reverse().find(other => other.kind === 'format' && other.step === step && displayAddress(other.address) === wanted);
+        return { runId: state.runId, record, format };
+      }
     }
   }
   const known = [...seen].sort();
@@ -158,11 +180,13 @@ export async function show(root, { step, occurrence, runId, prompt = false, err 
 
   const wantsText = !prompt && !err && !json;
   if (occurrence) {
-    const { runId: foundIn, record } = await occurrenceOf(root, states, step, occurrence, wantsText ? 'text' : prompt ? 'prompt' : 'any');
-    if (json) return { output: JSON.stringify({ run: foundIn, step: occurrence, ...record }, null, 2), code: 0 };
-    if (prompt) return { output: (await readFile(record.prompt, 'utf8')).trimEnd(), code: 0 };
-    if (err) return { output: record.stderrTail ?? '', code: 0 };
-    return { output: (await readFile(outputArtifact(record), 'utf8')).trimEnd(), code: 0 };
+    const { runId: foundIn, record, format } = await occurrenceOf(root, states, step, occurrence, wantsText ? 'text' : prompt ? 'prompt' : 'any');
+    if (json) return { output: JSON.stringify({ run: foundIn, step: occurrence, ...record, ...(format ? { format } : {}) }, null, 2), code: 0 };
+    if (prompt) return { output: format?.prompt ? `${section('prompt', await readText(record.prompt))}\n\n${section('json prompt', await readText(format.prompt))}` : await readText(record.prompt), code: 0 };
+    if (err) return { output: format?.stderrTail ? `${section('stderr', record.stderrTail ?? '')}\n\n${section('json stderr', format.stderrTail)}` : record.stderrTail ?? '', code: 0 };
+    const raw = await readText(outputArtifact(record));
+    const formatted = await formatSection(format);
+    return { output: formatted ? `${section('output', raw)}\n\n${formatted}` : raw, code: 0 };
   }
 
   // A step's result may come from an earlier run (a later run reused it), so look back through runs.
@@ -179,8 +203,13 @@ export async function show(root, { step, occurrence, runId, prompt = false, err 
   if (json) return { output: JSON.stringify({ run: holder.runId, step, ...found }, null, 2), code: 0 };
   if (prompt) {
     if (!found.prompt) throw new AweError('PROMPT_NOT_STORED', `The prompt of step ${step} was not saved ("storePrompts": false in awe.json). Preview it with: awe run ${step} --dry`);
-    return { output: (await readFile(found.prompt, 'utf8').catch(() => { throw new AweError('PROMPT_NOT_STORED', `The prompt file of step ${step} no longer exists (${found.prompt}); it was deleted with an old run. Preview it with: awe run ${step} --dry`); })).trimEnd(), code: 0 };
+    const gone = file => () => { throw new AweError('PROMPT_NOT_STORED', `The prompt file of step ${step} no longer exists (${file}); it was deleted with an old run. Preview it with: awe run ${step} --dry`); };
+    const main = (await readFile(found.prompt, 'utf8').catch(gone(found.prompt))).trimEnd();
+    if (!found.format?.prompt) return { output: main, code: 0 };
+    return { output: `${section('prompt', main)}\n\n${section('json prompt', (await readFile(found.format.prompt, 'utf8').catch(gone(found.format.prompt))).trimEnd())}`, code: 0 };
   }
-  if (err) return { output: found.stderrTail ?? '', code: 0 };
-  return { output: (await readFile(outputArtifact(found), 'utf8')).trimEnd(), code: 0 };
+  if (err) return { output: found.format?.stderrTail ? `${section('stderr', found.stderrTail ?? '')}\n\n${section('json stderr', found.format.stderrTail)}` : found.stderrTail ?? '', code: 0 };
+  const raw = await readText(outputArtifact(found));
+  const formatted = await formatSection(found.format);
+  return { output: formatted ? `${section('output', raw)}\n\n${formatted}` : raw, code: 0 };
 }

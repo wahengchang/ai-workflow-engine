@@ -1,5 +1,5 @@
 import { AweError, assertAwe } from './errors.js';
-import { splitCommand, displayCommand, fullCommand } from './command.js';
+import { splitCommand, displayCommand, fullCommand, usesSchemaPlaceholder } from './command.js';
 import { normalizeJsonDeclaration } from './json-output.js';
 
 export const DEFAULT_TIMEOUT_SECONDS = 300;
@@ -16,6 +16,12 @@ const NAME = /^[A-Za-z][\w-]*$/;
 function seconds(value, where) {
   assertAwe(typeof value === 'number' && Number.isFinite(value) && value > 0, 'INVALID_CONFIG', `awe.json ${where} must be a positive number of seconds`);
   return Math.round(value * 1000);
+}
+
+// Commands for steps (run, executors) cannot use {schema}/{schema_file}: only the formatter has a schema.
+function noSchema(spec, where) {
+  if (usesSchemaPlaceholder(spec.argv)) throw new AweError('INVALID_CONFIG', `awe.json ${where}: {schema} and {schema_file} are only for "formatter" commands`);
+  return spec;
 }
 
 function commandSpec(value, where) {
@@ -58,14 +64,18 @@ export function normalizeConfig(config) {
       'awe.json "common" must be a string, or an array of lines. It is added to the prompt of every step.');
     settings.common = Array.isArray(lines) ? lines.join('\n') : lines;
   }
-  if (config.run !== undefined) settings.run = commandSpec(config.run, 'run');
+  if (config.run !== undefined) settings.run = noSchema(commandSpec(config.run, 'run'), 'run');
+  if (config.formatter !== undefined) {
+    assertAwe(typeof config.formatter === 'string', 'INVALID_CONFIG', 'awe.json "formatter" must be a command string such as "claude -p {prompt}". It turns the text of a step that declares "json" into JSON; without it, "run" is used');
+    settings.formatter = { argv: splitCommand(config.formatter, 'awe.json formatter') };
+  }
   if (config.timeout !== undefined) settings.timeoutMs = seconds(config.timeout, 'timeout');
 
   if (config.executors !== undefined) {
     assertAwe(config.executors && typeof config.executors === 'object' && !Array.isArray(config.executors), 'INVALID_CONFIG', 'awe.json "executors" must be an object of name -> command');
     for (const [name, spec] of Object.entries(config.executors)) {
       assertAwe(NAME.test(name) && name !== 'run', 'INVALID_CONFIG', `awe.json executors name "${name}" must start with a letter and may not be "run" (that is the default)`);
-      settings.executors.set(name, commandSpec(spec, `executors.${name}`));
+      settings.executors.set(name, noSchema(commandSpec(spec, `executors.${name}`), `executors.${name}`));
     }
   }
 
@@ -82,6 +92,11 @@ export function normalizeConfig(config) {
       }
       if (spec.timeout !== undefined) step.timeoutMs = seconds(spec.timeout, `steps["${id}"].timeout`);
       if (spec.json !== undefined && spec.json !== false) step.json = normalizeJsonDeclaration(spec.json, `steps["${id}"]`);
+      if (spec.formatter !== undefined) {
+        assertAwe(typeof spec.formatter === 'string', 'INVALID_CONFIG', `awe.json steps["${id}"].formatter must be a command string`);
+        assertAwe(step.json, 'INVALID_CONFIG', `awe.json steps["${id}"].formatter needs "json" in the same step: the formatter is the command that produces its JSON`);
+        step.formatter = { argv: splitCommand(spec.formatter, `awe.json steps["${id}"].formatter`) };
+      }
       settings.steps[id] = step;
     }
   }
@@ -106,4 +121,18 @@ export function resolveExecutor(settings, stepId, overrides = {}, root) {
   const timeoutMs = overrides.timeoutSeconds !== undefined ? Math.round(overrides.timeoutSeconds * 1000)
     : settings.steps[stepId]?.timeoutMs ?? base.timeoutMs ?? settings.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
   return { name, argv: base.argv, display: displayCommand(base.argv, root), timeoutMs };
+}
+
+// The command that turns the text of a step that declares "json" into JSON.
+// Priority: steps.<id>.formatter > top-level "formatter" > "run" > the step's own executor. The prompt is built
+// in; the command may use {prompt}, {prompt_file}, {schema} (the declaration as JSON text) and {schema_file}
+// (a file holding it).
+export function resolveFormatter(settings, stepId, overrides = {}, root) {
+  const base = settings.steps[stepId]?.formatter ?? settings.formatter ?? settings.run;
+  // No formatter and no "run": the step's own command answers in prose and makes the JSON, which is how
+  // per-step executors keep working (and what library callers get when they pass no resolveFormatter).
+  if (!base) return { ...resolveExecutor(settings, stepId, overrides, root), name: 'formatter' };
+  const timeoutMs = overrides.timeoutSeconds !== undefined ? Math.round(overrides.timeoutSeconds * 1000)
+    : settings.steps[stepId]?.timeoutMs ?? settings.timeoutMs ?? DEFAULT_TIMEOUT_SECONDS * 1000;
+  return { name: 'formatter', argv: base.argv, display: displayCommand(base.argv, root), timeoutMs };
 }

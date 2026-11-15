@@ -3,6 +3,7 @@ import { AweError } from './errors.js';
 import { flatten } from './discover.js';
 import { buildPrompt } from './runtime.js';
 import { declaredOutputs } from './outputs.js';
+import { buildFormatPrompt } from './json-output.js';
 
 // `awe run --dry`: render prompts without calling anything. Upstream results do not exist, so a
 // reference such as {{ steps["1.1"].output }} renders as "[output of 1.1]". Every IF branch is shown
@@ -17,6 +18,9 @@ export async function dryRun(entry, tree, { input = {}, step, sources, outputs =
   for (const node of prompts) {
     const prompt = buildPrompt(entry, sources?.get(node.file) ?? await readFile(node.file, 'utf8'), context, node);
     if (step === undefined || node.id === step) rendered.push({ id: node.id, source: node.relative, prompt });
+    // A step that declares "json" makes a second call: the formatter turns its text into JSON.
+    const jsonDecl = entry.settings?.steps?.[node.id]?.json;
+    if (jsonDecl && (step === undefined || node.id === step)) rendered.push({ id: `${node.id} json`, source: 'built-in formatter prompt', prompt: buildFormatPrompt(`[output of ${node.id}]`, jsonDecl) });
     context.steps[node.id] = {
       dry: true,
       output: `[output of ${node.id}]`,

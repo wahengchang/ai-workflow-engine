@@ -7,7 +7,7 @@ This policy defines how to keep the **CLI** and **Agent Skill** usable over time
 | Surface | Canonical file | Change rule |
 | --- | --- | --- |
 | CLI invocation contract | `src/cli.js`, `bin/awe.js` | Change tests, README, Skill and installation docs together |
-| npm metadata / package boundary | `package.json` | Run pack+offline-install test; update supported Node matrix |
+| npm metadata / package boundary | `package.json` | Run pack+offline-install test; update the supported Node versions (`engines`) and test them by hand |
 | Agent behavior | `.agents/skills/awe/SKILL.md` | Keep valid Agent Skills frontmatter; verify discoverability |
 | Workflow syntax | `src/discover.js`, `src/template.js`, `src/runtime.js` | Version semantics and add regression fixtures |
 | Run engine, result cache and output files | `src/engine.js`, `src/cache.js`, `src/outputs.js`, `src/executor.js`, `src/command.js`, `src/config.js`, `docs/cli.md` | Keep `docs/cli.md`, README, SKILL.md and `test/run-partial.test.js`, `test/recovery.test.js`, `test/outputs.test.js`, `test/cli.test.js` in step; changing the fingerprint or session schema needs a migration note and a `SESSION_SCHEMA` bump |
@@ -17,13 +17,21 @@ This policy defines how to keep the **CLI** and **Agent Skill** usable over time
 
 ## Automated PR gate (no publication)
 
-GitHub Actions `.github/workflows/ci.yml` runs on PRs and pushes to main with minimal read-only token permissions:
+GitHub Actions `.github/workflows/ci.yml` runs on PRs and pushes to main with minimal read-only token permissions, and
+stays deliberately small because GitHub Actions minutes are a limited resource here:
 
-1. Node 20, 22, 24 on Linux, plus Node 22 on macOS and Windows.
+1. One job: Node 22 on Linux. A newer push to the same branch cancels the run in flight, so superseded commits cost nothing.
 2. `npm run check` for existing unit and regression tests.
 3. `npm run test:distribution`: check SKILL metadata, build npm tarball using `npm pack`, reject development/secret files, offline-install the tarball locally and globally in temporary prefixes, link the source with an isolated global prefix, and smoke-test `awe --help` and `awe check` from the **installed/linked** package. Also exercise npm bin resolution and one-off `npm exec --package=<local-tarball>` from an unrelated working directory. All npm cache writes go to a temporary cache. The test checks that global install creates the command shim; local and one-off npm exec checks launch the actual shim.
 
 No registry credentials, `npm publish`, GitHub Release action, model API key, or paid AI command is used by this CI workflow.
+
+CI is **not a platform or Node-version matrix.** The same two commands are run by hand — `npm run check` and
+`npm run test:distribution` — on Node 20 and 24 and on macOS and Windows whenever a change touches workflow-relative paths,
+cache addresses or fingerprints, child processes and signals, prompt-size limits, or command quoting. Those are where
+platform differences have actually appeared: a Windows job once caught LOOP cache addresses built with `path.join`
+(`1.1-outer\1.1.2-inner`), which differ from the `/` form in every other place. Record what was run in the pull request;
+`docs/plan.md` tracks which platforms are verified.
 
 **Coverage boundary:** tarball installation is not identical to remote GitHub installation or npm registry publication; static Skill metadata checks do not prove a successful interactive `npx skills add`. Those need manual release checks.
 
@@ -35,7 +43,7 @@ No registry credentials, `npm publish`, GitHub Release action, model API key, or
 - [ ] Compatibility notes for existing `awe.json`, `FLOW.json` and numbered prompts
 - [ ] No new credentials, tokens, `.env`, `.awe/runs`, `.awe/cache`, drafts, local files, or private content in the package
 - [ ] Clear handling for deprecated options and previous installed versions
-- [ ] `npm run check` and `npm run test:distribution` green (plus GitHub CI)
+- [ ] `npm run check` and `npm run test:distribution` green (plus GitHub CI), and the hand-run platform checks above for path, process or quoting changes
 - [ ] Changes linked to a GitHub Issue; installation behavior verified before claiming support
 
 ## Versioning and support
