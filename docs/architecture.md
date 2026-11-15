@@ -21,6 +21,20 @@
 - `awe run --dry` renders prompts only (`src/dry.js`): it never starts a command, writes no run and no cache, and shows upstream results as placeholders. It cannot evaluate IF/LOOP gates, so it shows every branch and one loop pass.
 - `awe.json` marks the workflow root. Its optional `common` text (string or lines) is reusable text, not a preamble: a prompt includes it only where it writes `{{ common }}`, and the prompt a step sends is its own file, rendered, with nothing added (`runtime.js`). `common` is rendered once per use with `input` only, and is a fingerprint part only of the steps that use it; a change is reported per step as `(the common text changed)`. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose. The v0.1 `ENTRY.md` is no longer read: a leftover one only produces a warning (`src/entry.js`).
 
+```mermaid
+flowchart TD
+    U["upstream results"] -- "copy (snapshot)" --> B1["branch A<br/>works on its own copy"]
+    U -- "copy (snapshot)" --> B2["branch B<br/>works on its own copy"]
+    B1 --> J{{"join barrier:<br/>wait for ALL branches"}}
+    B2 --> J
+    J -- "a branch failed" --> F["run fails, nothing is published<br/>(branches that finished stay cached)"]
+    J -- "all succeeded" --> M["publish only entries that changed<br/>from the snapshot"]
+    M -- "two branches wrote the same step id" --> X["PARALLEL_COLLISION"]
+    M --> D["later steps see the merged results"]
+```
+
+*Figure: a parallel group forks a snapshot, waits for every branch (the join barrier), then publishes only what changed.*
+
 ## Variable grammar
 
 Supported placeholders: `{{ input.topic }}`, `{{ steps["1.2"].output }}`, `{{ steps["1.2"].artifact }}`. The output reference inserts full text; the artifact reference inserts a file path. Use `artifact` for large material. No arbitrary JavaScript evaluation.
@@ -34,6 +48,53 @@ The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. A
 ## Interfaces
 
 `awe` CLI (`src/cli.js`: parsing, output) → Entry Loader (`entry.js`, `config.js`) → Directory Resolver (`discover.js`) → preflight (`template.js`, `preflight.js`) → engine (`engine.js`: walk, fingerprints, reuse) → executor (`executor.js`, `command.js`) → RunStore / cache (`storage.js`, `cache.js`). `awe show` (`show.js`) reads run state; `awe check` reuses the preflight and looks executables up on PATH (`which.js`).
+
+```mermaid
+flowchart TD
+    CLI["awe CLI<br/>cli.js: parse flags, print results"]
+    LOAD["Load<br/>entry.js + config.js: find awe.json, read settings<br/>discover.js: numbered folders become the plan"]
+    CHK["Check, before any AI call<br/>template.js + preflight.js:<br/>syntax, step references, output declarations"]
+    ENG["Engine<br/>engine.js: walk the plan, fingerprint, reuse or run"]
+    EXE["Executor<br/>executor.js + command.js:<br/>start the AI command (no shell)"]
+    STO["Storage, under .awe/<br/>storage.js: run state<br/>cache.js: result cache<br/>outputs.js: declared files"]
+    OTHER["Other commands reuse parts of this stack<br/>awe show: show.js reads the run state<br/>awe check: the Check layer + which.js<br/>awe run --dry: dry.js renders prompts only"]
+    CLI --> LOAD --> CHK --> ENG
+    ENG --> EXE
+    ENG --> STO
+    CLI -.- OTHER
+```
+
+*Figure: where each `src/` file sits in a run. `awe show`, `awe check` and `awe run --dry` reuse parts of the same stack.*
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant C as cli.js
+    participant E as engine.js
+    participant K as cache.js
+    participant A as AI command
+    participant S as .awe/ storage
+    U->>C: awe run 1.2
+    Note over C: validate the workflow first (preflight)
+    C->>E: run the plan
+    E->>K: open the cache session (lock)
+    loop each step, in order
+        E->>K: stored result still valid?
+        alt yes, and it is not the step you named
+            K-->>E: reuse it (no AI call)
+        else the step has to run
+            E->>K: save intent
+            E->>A: rendered prompt
+            A-->>E: stdout is the step result
+            E->>S: write artifact and run state
+            E->>K: commit result
+        end
+    end
+    E-->>C: run state
+    C-->>U: summary and next command
+```
+
+*Figure: one `awe run`, from the command line to the saved result.*
 
 ## Security and compatibility
 

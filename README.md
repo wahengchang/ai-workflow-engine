@@ -6,6 +6,26 @@
 > have called an AI: without a configured command, `awe run` stops and tells you how to set one; `awe run --dry` previews
 > the prompts. This is not yet a durable, production-ready workflow service.
 
+```mermaid
+flowchart LR
+    subgraph WF["Your workflow folder"]
+        direction TB
+        J["awe.json<br/>inputs + the AI command"]
+        P["Numbered prompts<br/>1.1-research.md, 1.2-outline.md, ..."]
+        F["FLOW.json (optional)<br/>parallel / if / loop"]
+    end
+    AWE["awe run<br/>fills in the variables,<br/>runs steps in numeric order"]
+    AI["Your AI CLI<br/>claude, codex, opencode, omp"]
+    OUT[".awe/<br/>outputs, rendered prompts,<br/>cache, run state"]
+    WF --> AWE
+    AWE -- "one rendered prompt per step" --> AI
+    AI -- "stdout is the step result" --> AWE
+    AWE -- "saves every result" --> OUT
+    OUT -. "awe show 1.2" .-> YOU(["You"])
+```
+
+*Figure: awe reads your folder, sends one rendered prompt per step to the AI command you configured, and saves every result under `.awe/`.*
+
 ## Installation: CLI vs Agent Skill
 
 **Engine installation and Skill installation are two separate actions.** The CLI executes workflows; the Skill only teaches compatible AI agents to call that already-installed CLI. AWE requires Node.js 20+; the independently maintained Skills CLI has its own Node requirements.
@@ -36,6 +56,18 @@ awe run 1.1         # run step 1.1, then look at it:  awe show 1.1
 awe run 1.2         # 1.1 comes from the cache, only 1.2 runs
 awe run             # the whole workflow, from the start
 ```
+
+```mermaid
+flowchart LR
+    A["awe init coffee"] --> B["awe run --dry<br/>preview prompts, calls no AI"]
+    B --> C["awe run 1.1"]
+    C --> D["awe show 1.1<br/>read the output"]
+    D -- "not happy: edit the prompt" --> C
+    D -- "happy" --> E["awe run 1.2<br/>1.1 comes from the cache"]
+    E --> F["awe run<br/>the whole workflow"]
+```
+
+*Figure: the everyday loop. Run one step, read it, edit the prompt, run it again; run the whole workflow only when it is ready.*
 
 The AI command is one line in `awe.json`:
 
@@ -68,9 +100,61 @@ my-content-workflow/
     └── 3.2-deliver.md
 ```
 
+```mermaid
+flowchart LR
+    subgraph s1["stage-1-research"]
+        A["1.1 topic-research"] --> B["1.2 outline"]
+    end
+    subgraph s2["stage-2-writing"]
+        C["2.1 draft"]
+    end
+    subgraph s3["stage-3-review"]
+        subgraph g["3.1-checks (FLOW.json: parallel)"]
+            D["3.1.1 facts"]
+            E["3.1.2 editorial"]
+        end
+        G["3.2 deliver"]
+    end
+    B --> C
+    C --> D
+    C --> E
+    D --> G
+    E --> G
+```
+
+*Figure: how the example folder above executes: numeric order, with the two checks in `3.1-checks` running in parallel.*
+
 All prompt files must use `N.N[-or-.]slug.md` (deeper numbers are supported). Workflow directories must use a numeric prefix or `stage-N-*` name, except named IF branches; a folder with no numbered prompts or `FLOW.json` (scratch space a step created) is ignored. Folder order is numeric, not lexical. Plain folders are sequences; special control folders require `FLOW.json`.
 
 ### Flow syntax
+
+```mermaid
+flowchart TB
+    subgraph seq["sequence (plain folder)"]
+        direction LR
+        a1["step 1"] --> a2["step 2"] --> a3["step 3"]
+    end
+    subgraph par["parallel"]
+        direction LR
+        p0["start"] --> pa["branch A"] --> pj["join: wait for all"]
+        p0 --> pb["branch B"] --> pj
+    end
+    subgraph iff["if"]
+        direction LR
+        t{"test equals<br/>the expected text?"} -- "yes" --> th["then folder"]
+        t -- "no" --> el["else folder"]
+    end
+    subgraph lp["loop (maxIterations = N)"]
+        direction LR
+        l1["run the steps inside"] --> l2{"until equals<br/>the expected text?"}
+        l2 -- "no, rounds left" --> l1
+        l2 -- "yes" --> l3["continue"]
+        l2 -- "no, N rounds used" --> l4["run fails:<br/>LOOP_EXHAUSTED"]
+    end
+    seq ~~~ par ~~~ iff ~~~ lp
+```
+
+*Figure: the four group types. A plain folder is a `sequence`; the others need a `FLOW.json`.*
 
 ```json
 { "type": "parallel" }
