@@ -1,6 +1,7 @@
 import { AweError, assertAwe } from './errors.js';
 import { splitCommand, displayCommand, fullCommand, usesSchemaPlaceholder } from './command.js';
 import { normalizeJsonDeclaration } from './json-output.js';
+import { normalizePath } from './outputs.js';
 
 export const DEFAULT_TIMEOUT_SECONDS = 300;
 
@@ -92,6 +93,10 @@ export function normalizeConfig(config) {
       }
       if (spec.timeout !== undefined) step.timeoutMs = seconds(spec.timeout, `steps["${id}"].timeout`);
       if (spec.json !== undefined && spec.json !== false) step.json = normalizeJsonDeclaration(spec.json, `steps["${id}"]`);
+      if (spec.jsonFile !== undefined) {
+        assertAwe(step.json, 'INVALID_CONFIG', `awe.json steps["${id}"].jsonFile needs "json" in the same step: it is where the JSON that "json" describes is saved`);
+        step.jsonFile = normalizePath(spec.jsonFile, `steps["${id}"].jsonFile`);
+      }
       if (spec.formatter !== undefined) {
         assertAwe(typeof spec.formatter === 'string', 'INVALID_CONFIG', `awe.json steps["${id}"].formatter must be a command string`);
         assertAwe(step.json, 'INVALID_CONFIG', `awe.json steps["${id}"].formatter needs "json" in the same step: the formatter is the command that produces its JSON`);

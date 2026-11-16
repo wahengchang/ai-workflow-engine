@@ -1,13 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { AweError } from './errors.js';
 import { templateReferences } from './template.js';
-import { assertOutputLocations, declaredOutputs } from './outputs.js';
+import { assertJsonFileConflicts, assertOutputLocations, declaredOutputs } from './outputs.js';
 
 // Model the first iteration and all possible branches, without executing a gate.
 export async function validateReferences(entry, tree, sources = new Map()) {
   // Also validates the awe.json output declarations (including parallel path conflicts).
   const outputs = declaredOutputs(entry.config, tree);
   await assertOutputLocations(entry.root, tree, outputs);
+  assertJsonFileConflicts(entry.settings, outputs);
   function check(source, available, label, isCommon = false) {
     for (const reference of templateReferences(source, label)) {
       if (reference.isCommon && isCommon) {

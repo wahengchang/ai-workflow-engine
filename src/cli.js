@@ -11,6 +11,7 @@ import { initWorkflow } from './init.js';
 import { validateReferences } from './preflight.js';
 import { resolveExecutor, resolveFormatter, noExecutorError } from './config.js';
 import { show, renderSteps, countsLine, cacheLine } from './show.js';
+import { jsonFiles } from './outputs.js';
 import { findExecutable, detectAgent } from './which.js';
 
 // ── Help ────────────────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ Docs: docs/cli.md
 const COMMAND_HELP = {
   init: 'Usage: awe init <dir>\nCreates a six-step content workflow in a new folder and writes the first AI CLI found on PATH (claude, codex, opencode, omp) into awe.json as "run". Refuses existing folders.',
   run: `Usage: awe run [dir] [step] [flags]\n\n${HELP.slice(HELP.indexOf('Build a workflow'), HELP.indexOf('Exit codes')).trim()}`,
-  show: 'Usage: awe show [dir] [step] [--prompt] [--err] [--run <id>] [--json]\n  awe show              summary of the latest run\n  awe show 1.2          the output text of step 1.2\n  awe show 1.2 --prompt the rendered prompt that was sent\n  awe show 1.2 --err    the last lines the command wrote to stderr',
+  show: 'Usage: awe show [dir] [step] [--prompt] [--err] [--raw] [--formatted] [--run <id>] [--json]\n  awe show              summary of the latest run\n  awe show 1.2          the output text of step 1.2 (a step that declares "json": its text, then its JSON)\n  awe show 1.2 --prompt the rendered prompt that was sent\n  awe show 1.2 --err    the last lines the command wrote to stderr\n  awe show 1.1 --raw       only the step\'s own text (nothing else, safe to pipe)\n  awe show 1.1 --formatted only the JSON made from it (nothing else, safe to pipe)',
   check: 'Usage: awe check [dir] [--json]\nValidates the workflow, lists its steps and checks that each executor command exists on PATH.',
 };
 
@@ -69,7 +70,7 @@ const REMOVED = {
 const FLAGS = {
   init: {},
   run: { '--var': 'multi', '--cache': 'bool', '--no-cache': 'bool', '--dry': 'bool', '--executor': 'value', '--timeout': 'value', '--retry': 'multi', '--json': 'bool' },
-  show: { '--prompt': 'bool', '--err': 'bool', '--run': 'value', '--json': 'bool' },
+  show: { '--prompt': 'bool', '--err': 'bool', '--raw': 'bool', '--formatted': 'bool', '--run': 'value', '--json': 'bool' },
   check: { '--json': 'bool' },
 };
 // Anything that starts like a step address is treated as one, so a typo such as 2.1@x gets a step-address error.
@@ -145,8 +146,10 @@ export function parseArgs(argv) {
       if (used) throw usage(`--dry calls nothing, so ${flag} has no effect. Drop one of them`);
     }
   }
-  if (command === 'show' && flags.prompt && flags.err) throw usage('--prompt and --err show different things; pass only one');
-  if (command === 'show' && (flags.prompt || flags.err) && !step) throw usage(`${flags.prompt ? '--prompt' : '--err'} needs a step, e.g. awe show 1.2 ${flags.prompt ? '--prompt' : '--err'}`);
+  if (command === 'show' && [flags.prompt, flags.err, flags.raw, flags.formatted, flags.json].filter(Boolean).length > 1) throw usage('--prompt, --err, --raw, --formatted and --json each show something different; pass only one');
+  for (const name of ['prompt', 'err', 'raw', 'formatted']) {
+    if (command === 'show' && flags[name] && !step) throw usage(`--${name} needs a step, e.g. awe show 1.2 --${name}`);
+  }
   return { command, dir, step, flags };
 }
 
@@ -256,10 +259,11 @@ async function checkCommand({ dir, flags }, cwd) {
   // The exit code answers "is the workflow valid?" (invalid workflows throw, exit 2). A missing executor is
   // reported but does not fail the check, so CI machines without an AI CLI can still validate workflows.
   const commonChars = (entry.common ?? '').trim().length;
-  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, usedBySteps: commonUsers }, promptSteps: promptIds.length, plan, executors: used };
+  const result = { valid: true, ready: problems.length === 0, workflow: entry.root, common: { characters: commonChars, usedBySteps: commonUsers }, jsonFiles: Object.fromEntries(jsonFiles(entry.settings)), promptSteps: promptIds.length, plan, executors: used };
   if (flags.json) return { output: JSON.stringify(withWarnings(result, warnings), null, 2), code: 0, warnings };
   const lines = [`VALID ${path.basename(entry.root)} (${promptIds.length} prompt steps)`];
   if (commonChars) lines.push(`Common    ${commonChars} characters, written into ${commonUsers.length ? `${commonUsers.length} of ${promptIds.length} steps by {{ common }}${commonUsers.length < promptIds.length && commonUsers.length <= 8 ? ` (${commonUsers.join(', ')})` : ''}` : 'no step (nothing writes {{ common }})'}${commonChars > 4000 ? '. That is large: each of those steps pays for it, and any edit reruns them' : ''}`);
+  for (const [id, file] of jsonFiles(entry.settings)) lines.push(`JSON file  step ${id} saves its JSON to ${file}`);
   lines.push(prettyPlan(plan), '');
   for (const item of used) {
     const label = item.name === 'formatter' ? `formatter (JSON of ${item.steps.join(', ')})` : item.name;
@@ -284,7 +288,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
     const rendered = await dryRun(entry, tree, { input: flags.input, step: target?.step, sources, outputs });
     if (flags.json) return { output: JSON.stringify(withWarnings({ dry: true, steps: rendered }, warnings), null, 2), code: 0, warnings };
     const body = rendered.map(item => `──── ${item.id}  ${item.source} ────\n${item.prompt.trimEnd()}`).join('\n\n');
-    const note = `DRY RUN — ${rendered.length} prompt${rendered.length === 1 ? '' : 's'} rendered; nothing was executed, no AI calls, no cache written.\nReferences to earlier steps appear as [output of 1.1]. Every IF branch is shown; a LOOP body once.`;
+    const note = `DRY RUN — ${rendered.length} prompt${rendered.length === 1 ? '' : 's'} rendered; nothing was executed, no AI calls, no cache written.\nReferences to earlier steps appear as [output of 1.1]. Every IF branch is shown; an UNTIL body once.`;
     return { output: `${note}\n\n${body}\n\n${note.split('\n')[0]}`, code: 0, warnings };
   }
 
@@ -355,7 +359,7 @@ async function showCommand({ dir, step, flags }, cwd) {
   const target = step ? parseStepArg(step) : null;
   const result = await show(root, {
     step: target?.step, occurrence: target?.iterations ? `${target.step}@${target.iterations.join('.')}` : undefined,
-    runId: flags.runId, prompt: flags.prompt, err: flags.err, json: flags.json,
+    runId: flags.runId, prompt: flags.prompt, err: flags.err, json: flags.json, only: flags.raw ? 'raw' : flags.formatted ? 'formatted' : undefined,
   });
   return { ...result, warnings: [] };
 }

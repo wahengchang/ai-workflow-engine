@@ -200,6 +200,8 @@ awe show                  the latest run: status, one line per step, stderr of a
 awe show 1.2              the output of step 1.2 (from whichever run last produced it)
 awe show 1.2 --prompt     the rendered prompt that was sent
 awe show 1.2 --err        the last lines the command wrote to stderr
+awe show 1.1 --raw         only the step's own text; nothing else, so it can be piped
+awe show 1.1 --formatted   only the JSON made from it (a step that declares "json"); nothing else
 awe show 2.1.1@2          one UNTIL iteration (same address form as `awe run`)
 awe show --run <id>       a specific run (default: the latest)
 awe show ... --json       the stored state
@@ -311,7 +313,10 @@ there under `steps.<id>.outputs`, or write them into a dot-folder such as `.stat
 
 ## Output files
 
-Besides text, a step can produce files such as PDFs or images. Declare them per step in `awe.json`:
+Besides text, a step can produce files such as PDFs or images. A declared output is a file the step's **own command writes**;
+awe checks that it was written by this attempt and keeps a copy. awe never creates one from the step's answer. To save a
+step's **JSON answer** as a file, do not write a script and a second step: use [`jsonFile`](#saving-the-json-as-a-file).
+Declare outputs per step in `awe.json`:
 
 ```json
 {
@@ -431,7 +436,7 @@ Set it once, at the top level of `awe.json`, written like `run`; a step can over
 ```
 
 Precedence: `steps.<id>.formatter` → top-level `formatter` → `run`. Without a `formatter`, the `run` command is used, so it
-works out of the box. If `awe.json` has no `run` either, the step's own executor makes its JSON (a step that names an
+works out of the box: **write `formatter` only when it should be a different command** (do not repeat `run`). If `awe.json` has no `run` either, the step's own executor makes its JSON (a step that names an
 executor is not asked to configure a second command). The formatter has the same `{prompt}`, `{prompt_file}` and stdin rules
 as `run`, plus two placeholders that only it has:
 
@@ -505,6 +510,41 @@ Title: The Fox. About a fox who learns to share.
 ```
 
 `awe show 1.1 --prompt` and `--err` print both sections too. Steps without a declaration print as before.
+
+To take just one part, for a pipe or a file: `awe show 1.1 --formatted > roles.json` (only the JSON) and `awe show 1.1 --raw`
+(only the step's own text). Without `jsonFile`, the JSON otherwise lives only inside the run folder
+(`.awe/runs/<run>/artifacts/1-1-json-attempt-<n>.md`): a different path every run, and not a `.json` file.
+
+### Saving the JSON as a file
+
+To get the checked JSON as a real file in the workflow (for another tool, for git, for a person), say where, next to
+`"json"` in the same step:
+
+```json
+{
+  "steps": {
+    "1.1": {
+      "json": { "type": "array", "minItems": 3, "maxItems": 3 },
+      "jsonFile": "output/roles.json"
+    }
+  }
+}
+```
+
+That is all: no script, no second step, no `executors`, no `outputs`. After the formatter's answer has been checked, awe writes it
+to that path, pretty-printed (2 spaces, a final newline) and replaced atomically. `awe run` shows where it went
+(`1.1 json  ran  4s  -> output/roles.json`), and `awe show 1.1` labels the section `json (saved: output/roles.json)`.
+
+- **Only checked JSON is written.** If the formatter's answer is rejected, the file is left exactly as it was (an earlier valid
+  result, or absent): it never holds anything the declaration would have refused. Because the step is checked **before** it counts
+  as done, a script or tool that reads the file does not need to check the shape again.
+- **The file always matches the result in use.** A cached run puts it back if it was deleted or edited, without asking the model
+  again, and leaves it untouched when it is already correct. awe owns this file: edits to it are overwritten.
+- **Putting `jsonFile` in `"json"` is a mistake** (`"json": { "file": … }`); the error says where it goes. `jsonFile` needs
+  `"json"` in the same step.
+- The path follows the same rules as a declared output (relative, inside the workflow, not under `.awe`, no wildcards, no symlinks
+  on the way). Two steps may not use the same path, nor the path of a declared output (`OUTPUT_CONFLICT`).
+- It is not part of the cache identity: moving the file to another path writes it there, and does not rerun the formatter.
 
 ### Checks and cache
 
@@ -630,6 +670,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `OUTPUT_MISSING`, `OUTPUT_STALE`, `OUTPUT_INVALID`, `OUTPUT_CONFLICT` | see [output files](#output-files) |
 | `OUTPUT_NOT_JSON`, `OUTPUT_JSON_INVALID` | the formatter of a step that declares JSON answered with something else, or with JSON that does not fit; see [JSON output](#json-output) |
 | `RUN_NOT_FOUND`, `PROMPT_NOT_STORED` | `awe show` has nothing to show |
+| `NO_JSON_OUTPUT` | `awe show <step> --formatted` on a step that declares no `"json"`, or whose formatter has no result |
 
 ## Upgrading from v0.1
 

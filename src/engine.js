@@ -9,7 +9,7 @@ import { executePrompt, needsPromptFile } from './executor.js';
 import { RunStore } from './storage.js';
 import { buildPrompt, gateValue } from './runtime.js';
 import { digestOf, secretDigest, sha256 } from './digest.js';
-import { assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs, filePaths, verifyStoredFile } from './outputs.js';
+import { assertJsonFileConflicts, assertOutputLocations, declaredOutputs, snapshotOutputs, captureOutputs, filePaths, verifyStoredFile, writeJsonFile } from './outputs.js';
 import { openSession, workspaceSalt } from './cache.js';
 
 // Bump when the parts of a fingerprint change, so records written by an older awe are recognised.
@@ -120,6 +120,7 @@ export async function runWorkflow(entry, tree, options = {}) {
   if (!outputs) {
     outputs = declaredOutputs(entry.config, tree);
     await assertOutputLocations(entry.root, tree, outputs);
+    assertJsonFileConflicts(entry.settings, outputs);
   }
   const info = indexTree(tree);
   const nodes = flatten(tree);
@@ -538,6 +539,8 @@ async function walkPrompt(node, context, sh, scope) {
       entryState.unknownOutcome = true;
       if (error.code === 'EXECUTOR_TIMEOUT') error.message += ` The command may have acted before it was stopped, so run again with --retry ${displayAddress(address)}.`;
     }
+    // A declared output file is written by the step's own command; awe does not make it from the answer.
+    if (error.code === 'OUTPUT_MISSING' && jsonDecl) error.message += '. awe does not create a declared output from the answer. To save this step\'s JSON as a file, write "jsonFile": "<path>" next to "json" in the same step.';
     Object.assign(entryState, { status: interrupted ? 'INTERRUPTED' : 'FAILED', finishedAt: new Date().toISOString(), error: { code: error.code ?? 'UNEXPECTED', message: error.message }, ...(tail ? { stderrTail: tail } : {}) });
     state.steps[id] = { ...state.steps[id], status: interrupted ? 'INTERRUPTED' : 'FAILED', error: entryState.error, ...(tail ? { stderrTail: tail } : {}) };
     event(sh, interrupted ? 'STEP_INTERRUPTED' : 'STEP_FAILED', node, { address, attempt, code: error.code ?? 'UNEXPECTED', message: error.message });
@@ -581,6 +584,10 @@ async function convertStep(node, context, sh, scope, main) {
   const fingerprint = digestOf(parts);
   const partDigests = Object.fromEntries(Object.entries(parts).map(([key, value]) => [key, secretDigest(sh.salt, value)]));
 
+  // "jsonFile": awe saves the checked JSON itself, on a cached run too, so the file always matches the result in use.
+  const jsonFile = sh.entry.settings.steps[id]?.jsonFile;
+  const saveJson = json => (jsonFile ? writeJsonFile(sh.entry.root, jsonFile, json) : undefined);
+
   const record = session.ensure(caddress, id);
   let cacheProblem = null;
   if (sh.readCache && record.latest?.fingerprint === fingerprint) {
@@ -592,8 +599,18 @@ async function convertStep(node, context, sh, scope, main) {
     } else {
       const reused = { runId: record.latest.runId, attempt: record.latest.attempt, resultId: record.latest.resultId, at: record.latest.completedAt };
       const sourcePrompt = typeof record.latest.prompt === 'string' ? path.join(sh.entry.root, '.awe', 'runs', record.latest.runId, record.latest.prompt) : undefined;
-      state.invocations.push({ address: caddress, step: id, kind: 'format', invocation, action: 'REUSED', status: 'COMPLETED', fingerprint, from: reused, resultId: record.latest.resultId, artifact: cached.artifact });
-      state.steps[id].format = { status: 'COMPLETED', attempts: 0, reused, executor: 'formatter', artifact: cached.artifact, ...(sourcePrompt ? { prompt: sourcePrompt } : {}) };
+      try {
+        await saveJson(cached.json);
+      } catch (error) {
+        const failure = { code: error.code ?? 'UNEXPECTED', message: error.message };
+        state.invocations.push({ address: caddress, step: id, kind: 'format', invocation, action: 'EXECUTED', status: 'FAILED', error: failure });
+        state.steps[id].format = { status: 'FAILED', attempts: 0, executor: 'formatter', error: failure };
+        event(sh, 'STEP_FAILED', node, { address: caddress, code: failure.code, message: failure.message });
+        error.step ??= `${displayAddress(address)} json`;
+        throw error;
+      }
+      state.invocations.push({ address: caddress, step: id, kind: 'format', invocation, action: 'REUSED', status: 'COMPLETED', fingerprint, from: reused, resultId: record.latest.resultId, artifact: cached.artifact, ...(jsonFile ? { file: jsonFile } : {}) });
+      state.steps[id].format = { status: 'COMPLETED', attempts: 0, reused, executor: 'formatter', artifact: cached.artifact, ...(jsonFile ? { file: jsonFile } : {}), ...(sourcePrompt ? { prompt: sourcePrompt } : {}) };
       state.reused++;
       event(sh, 'STEP_REUSED', node, { address: caddress, ...reused });
       context.steps[id] = { ...context.steps[id], json: cached.json, jsonArtifact: cached.artifact, resultId: record.latest.resultId };
@@ -647,13 +664,15 @@ async function convertStep(node, context, sh, scope, main) {
     rejectedArtifact = artifact;
     const json = readJsonOutput(output, jsonDecl, id, `The formatter of step ${id}`);
     rejectedArtifact = null;
+    // Only checked JSON is ever written; a rejected answer leaves the file as it was.
+    await saveJson(json);
     await hook(sh, 'afterArtifact', { address: caddress });
 
     const resultId = randomUUID();
     const bytes = Buffer.from(output, 'utf8');
     const finishedAt = new Date().toISOString();
-    Object.assign(entryState, { status: 'COMPLETED', resultId, finishedAt, artifact, ...(stderrTail ? { stderrTail } : {}) });
-    state.steps[id].format = { status: 'COMPLETED', attempts: attempt, executor: 'formatter', artifact, ...(keepPrompt && promptFile ? { prompt: promptFile } : {}), ...(stderrTail ? { stderrTail } : {}) };
+    Object.assign(entryState, { status: 'COMPLETED', resultId, finishedAt, artifact, ...(jsonFile ? { file: jsonFile } : {}), ...(stderrTail ? { stderrTail } : {}) });
+    state.steps[id].format = { status: 'COMPLETED', attempts: attempt, executor: 'formatter', artifact, ...(jsonFile ? { file: jsonFile } : {}), ...(keepPrompt && promptFile ? { prompt: promptFile } : {}), ...(stderrTail ? { stderrTail } : {}) };
     state.executed++;
     event(sh, 'STEP_COMPLETED', node, { address: caddress, attempt, artifact });
     await sh.store.save(state);
