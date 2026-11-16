@@ -82,14 +82,14 @@ export function renderSteps(state, root) {
 }
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
-// One vocabulary: when a LOOP made some step run more than once, the counts are runs of a step, not steps.
+// One vocabulary: when an UNTIL group made some step run more than once, the counts are runs of a step, not steps.
 export function countsLine(state) {
   const items = state.invocations ?? [];
   const steps = items.filter(item => item.kind !== 'format');
   const formats = items.filter(item => item.kind === 'format').length;
   const repeats = steps.length > new Set(steps.map(item => item.step)).size;
   const word = repeats ? 'step run' : 'step';
-  const notes = [repeats ? 'a step inside a loop counts once per iteration' : '', formats ? `${plural(formats, 'JSON formatter run')} included` : ''].filter(Boolean);
+  const notes = [repeats ? 'a step inside an until group counts once per iteration' : '', formats ? `${plural(formats, 'JSON formatter run')} included` : ''].filter(Boolean);
   return `Reused ${plural(state.reused ?? 0, word)} · Ran ${plural(state.executed ?? 0, word)}${notes.length ? `   (${notes.join('; ')})` : ''}`;
 }
 
@@ -134,7 +134,7 @@ async function formatSection(format) {
   return section('json', `(not available: the formatter ${String(format.status ?? 'did not run').toLowerCase()}${format.error ? `, ${firstLine(format.error.message)}` : ''})`);
 }
 
-// `awe show 1.1.1@2`: one LOOP occurrence, found among the invocations a run recorded.
+// `awe show 1.1.1@2`: one UNTIL-group occurrence, found among the invocations a run recorded.
 async function occurrenceOf(root, states, step, wanted, need) {
   const seen = new Set();
   for (const state of states) {

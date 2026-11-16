@@ -12,7 +12,7 @@ flowchart LR
         direction TB
         J["awe.json<br/>inputs + the AI command"]
         P["Numbered prompts<br/>1.1-research.md, 1.2-outline.md, ..."]
-        F["FLOW.json (optional)<br/>parallel / if / loop"]
+        F["FLOW.json (optional)<br/>parallel / if / until"]
     end
     AWE["awe run<br/>fills in the variables,<br/>runs steps in numeric order"]
     AI["Your AI CLI<br/>claude, codex, opencode, omp"]
@@ -144,12 +144,12 @@ flowchart TB
         t{"test equals<br/>the expected text?"} -- "yes" --> th["then folder"]
         t -- "no" --> el["else folder"]
     end
-    subgraph lp["loop (maxIterations = N)"]
+    subgraph lp["until (maxIterations = N)"]
         direction LR
         l1["run the steps inside"] --> l2{"until equals<br/>the expected text?"}
         l2 -- "no, rounds left" --> l1
         l2 -- "yes" --> l3["continue"]
-        l2 -- "no, N rounds used" --> l4["run fails:<br/>LOOP_EXHAUSTED"]
+        l2 -- "no, N rounds used" --> l4["run fails:<br/>UNTIL_EXHAUSTED"]
     end
     seq ~~~ par ~~~ iff ~~~ lp
 ```
@@ -172,20 +172,20 @@ An IF group declares which subdirectories are branches; the matching test is typ
 }
 ```
 
-A bounded LOOP group owns its internal steps and checks its exit expression after each iteration:
+A bounded UNTIL group repeats the steps inside it, and checks its exit expression after each round: *repeat until `test` equals `equals`, at most `maxIterations` times*. It retries or refines; it does not walk through a list (there is no `{{ loop.iteration }}`, and no for-each yet):
 
 ```json
 {
-  "type": "loop",
-  "until": "{{ steps[\"3.1.2\"].output }}",
+  "type": "until",
+  "test": "{{ steps[\"3.1.2\"].output }}",
   "equals": "PASS",
   "maxIterations": 3
 }
 ```
 
-The runtime knows how to route and limit loops. It **never** decides what good writing is; author your own prompts and control conditions. Branch and loop outputs are checked via exact string comparison.
+The runtime knows how to route and limit repeats. It **never** decides what good writing is; author your own prompts and control conditions. Branch and until outputs are checked via exact string comparison.
 
-For an LLM gate, use a dedicated verdict prompt: "Your entire reply must be exactly PASS or FAIL." Models may still reply with Markdown or explanations. Opt in to `"match": "first-line"` on an IF or LOOP to compare only the first non-blank line, stripping one surrounding Markdown emphasis or inline-code wrapper (for example, `**PASS**` or `` `PASS` ``). `"caseInsensitive": true` also ignores letter case. The default remains exact comparison after trimming whitespace.
+For an LLM gate, use a dedicated verdict prompt: "Your entire reply must be exactly PASS or FAIL." Models may still reply with Markdown or explanations. Opt in to `"match": "first-line"` on an IF or UNTIL to compare only the first non-blank line, stripping one surrounding Markdown emphasis or inline-code wrapper (for example, `**PASS**` or `` `PASS` ``). `"caseInsensitive": true` also ignores letter case. The default remains exact comparison after trimming whitespace.
 
 On an IF, `"elseEquals": "FAIL"` makes the gate strict: output matching neither `equals` nor `elseEquals` fails with `IF_NO_MATCH`. Without `elseEquals`, every non-matching output selects the else branch. Use a human-review branch as the fallback when handling untrusted input.
 

@@ -60,27 +60,27 @@ test('IF folder selects one branch using output from a previous prompt step', as
   assert.equal(state.events.find(e => e.type === 'IF_BRANCH').branch, 'approved');
 });
 
-test('LOOP repeats its own children and stops at explicit exit result', async t => {
+test('UNTIL repeats its own children and stops at explicit exit result', async t => {
   const dir = await fixture(t, {
-    '1.1-review-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.1"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-review-loop/FLOW.json': JSON.stringify({ type: 'until', test: '{{ steps["1.1.1"].output }}', equals: 'PASS', maxIterations: 3 }),
     '1.1-review-loop/1.1.1-judge.md': 'RETRY_ONCE',
     '1.2-done.md': 'OUTPUT::done',
   });
   const state = await run(dir);
   assert.equal(state.status, 'COMPLETED');
   assert.equal(state.steps['1.1.1'].attempts, 2);
-  assert.equal(state.events.find(e => e.type === 'LOOP_COMPLETED').iteration, 2);
+  assert.equal(state.events.find(e => e.type === 'UNTIL_COMPLETED').iteration, 2);
   assert.ok(state.steps['1.2']);
 });
 
-test('bounded LOOP fails rather than hanging indefinitely', async t => {
+test('bounded UNTIL fails rather than hanging indefinitely', async t => {
   const dir = await fixture(t, {
-    '1.1-review-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.1"].output }}', equals: 'PASS', maxIterations: 2 }),
+    '1.1-review-loop/FLOW.json': JSON.stringify({ type: 'until', test: '{{ steps["1.1.1"].output }}', equals: 'PASS', maxIterations: 2 }),
     '1.1-review-loop/1.1.1-judge.md': 'RETURN_FAIL',
   });
   const state = await run(dir);
   assert.equal(state.status, 'FAILED');
-  assert.equal(state.error.code, 'LOOP_EXHAUSTED');
+  assert.equal(state.error.code, 'UNTIL_EXHAUSTED');
   assert.equal(state.steps['1.1.1'].attempts, 2);
 });
 

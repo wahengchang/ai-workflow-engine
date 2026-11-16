@@ -5,7 +5,7 @@
 - **Workflow** = directory containing `awe.json` and numbered prompts/groups.
 - **Step** = `N.N-slug.md`. Every prompt step has a unique numeric ID and a versioned source file (via Git).
 - **Group** = numbered folder or `stage-N-*` folder. Default behavior is sequential.
-- **Control group** = folder containing `FLOW.json` with `type: sequence | parallel | if | loop`.
+- **Control group** = folder containing `FLOW.json` with `type: sequence | parallel | if | until`.
 - **Input** = immutable `input.key` variables provided by `awe.json` or `--var`.
 - **Step output** = content emitted by a command, stored as a separate artifact.
 - **Run** = immutable run identifier with state + event trace under `.awe/runs/<run-id>`. Every `awe run` is one run; its results also feed the workflow's single result cache (`.awe/cache`).
@@ -13,12 +13,12 @@
 
 ## Execution boundary
 
-- The engine does not semantically judge content. A user-authored prompt may return `PASS` or `FAIL`; IF and LOOP only match exact strings.
+- The engine does not semantically judge content. A user-authored prompt may return `PASS` or `FAIL`; IF and UNTIL only match exact strings.
 - A numbered prompt is a black-box task. The CLI executor is an adapter; no per-step shared conversation is assumed.
 - A sequence walks children in numeric order. A parallel group forks a snapshot of its upstream context, waits for all branches, then publishes only entries changed from that snapshot (join barrier). Writes from distinct branches must have distinct IDs; replacing an earlier loop iteration's result is allowed.
-- IF reads a rendered `test` expression and chooses one of two named subdirectories. LOOP runs its children up to `maxIterations`, then compares the rendered `until` expression with `equals`.
+- IF reads a rendered `test` expression and chooses one of two named subdirectories. UNTIL runs its children, then compares the rendered `test` expression with `equals`, and repeats up to `maxIterations` rounds until they match (`UNTIL_EXHAUSTED` otherwise). A `"type": "loop"` with `until` from before v0.3 is read as the same group and reported as a warning.
 - Control routing is deterministic. Unsupported expressions fail rather than evaluate arbitrary code.
-- `awe run --dry` renders prompts only (`src/dry.js`): it never starts a command, writes no run and no cache, and shows upstream results as placeholders. It cannot evaluate IF/LOOP gates, so it shows every branch and one loop pass.
+- `awe run --dry` renders prompts only (`src/dry.js`): it never starts a command, writes no run and no cache, and shows upstream results as placeholders. It cannot evaluate IF/UNTIL gates, so it shows every branch and one loop pass.
 - `awe.json` marks the workflow root. Its optional `common` text (string or lines) is reusable text, not a preamble: a prompt includes it only where it writes `{{ common }}`, and the prompt a step sends is its own file, rendered, with nothing added (`runtime.js`). `common` is rendered once per use with `input` only, and is a fingerprint part only of the steps that use it; a change is reported per step as `(the common text changed)`. `awe.json` and `FLOW.json` are the only machine-enforced configuration. This avoids conflicting rules in prose. The v0.1 `ENTRY.md` is no longer read: a leftover one only produces a warning (`src/entry.js`).
 
 ```mermaid
@@ -41,7 +41,7 @@ Supported placeholders: `{{ input.topic }}`, `{{ steps["1.2"].output }}`, `{{ st
 
 Only template source is parsed; inserted values never become template syntax. `\{{` in source emits a literal `{{`. Unsupported and unclosed expressions fail syntax checks before any command runs, and `awe check` / `awe run` also reject references to steps that are not guaranteed to exist (`src/preflight.js`).
 
-IF and LOOP default to exact comparison after whitespace trimming. Optional `match: first-line` strips one Markdown wrapper from the first non-blank line; `caseInsensitive` folds case. IF's optional `elseEquals` enforces a known negative verdict, failing with `IF_NO_MATCH` for unexpected text.
+IF and UNTIL default to exact comparison after whitespace trimming. Optional `match: first-line` strips one Markdown wrapper from the first non-blank line; `caseInsensitive` folds case. IF's optional `elseEquals` enforces a known negative verdict, failing with `IF_NO_MATCH` for unexpected text.
 
 The CLI passes an AbortSignal to the runtime and executors for SIGINT/SIGTERM. Active steps and the run become `INTERRUPTED`; POSIX executors run in their own process groups for timeout/interruption cleanup. Executor metadata omits argument values. Rendered prompts are persisted per attempt unless `awe.json` sets `storePrompts: false`.
 

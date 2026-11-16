@@ -56,7 +56,7 @@ test('conditional outputs cannot escape an IF and its gate requires upstream val
 
 test('loop gate sees body results, but first iteration cannot read future feedback', async t => {
   const dir = await fixture(t, {
-    '1.1-loop/FLOW.json': JSON.stringify({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 2 }),
+    '1.1-loop/FLOW.json': JSON.stringify({ type: 'until', test: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 2 }),
     '1.1-loop/1.1.1-draft.md': 'draft',
     '1.1-loop/1.1.2-review.md': '{{ steps["1.1.1"].output }}',
     '1.2-final.md': '{{ steps["1.1.2"].output }}',

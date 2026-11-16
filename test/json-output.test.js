@@ -374,9 +374,9 @@ test('show: the step\'s text, then what its formatter made of it, or what it ret
   assert.match((await cli(['show', ws.dir], ws.dir)).output, /^ {2}1\.1 json +FAILED +The formatter of step 1\.1 must output JSON only/m);
 });
 
-test('show reads a LOOP occurrence together with its formatter', async t => {
+test('show reads a UNTIL occurrence together with its formatter', async t => {
   const ws = await jsonWorkspace(t, {
-    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/FLOW.json': flow({ type: 'until', test: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
     '1.1-loop/1.1.1-work.md': 'OUTPUT::{"n":{n}}',
     '1.1-loop/1.1.2-check.md': 'PASS_IF_NUM_GTE::2::{{ steps["1.1.1"].json.n }}',
   }, { steps: { '1.1.1': { json: { type: 'object', required: ['n'] } } } });

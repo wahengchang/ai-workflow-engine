@@ -55,9 +55,9 @@ test('rerunning never overwrites an earlier copy, and downstream follows the new
   assert.ok((await calls(ws.log)).find(c => c.step === '1.2').prompt.includes(b));
 });
 
-test('attempts inside one run (LOOP iterations) get separate directories', async t => {
+test('attempts inside one run (UNTIL iterations) get separate directories', async t => {
   const ws = await workspace(t, {
-    '1.1-loop/FLOW.json': flow({ type: 'loop', until: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
+    '1.1-loop/FLOW.json': flow({ type: 'until', test: '{{ steps["1.1.2"].output }}', equals: 'PASS', maxIterations: 3 }),
     '1.1-loop/1.1.1-make.md': 'WRITE::out/draft.txt::draft {n}\nOUTPUT::made',
     // The gate passes once the saved path says attempt-2, which proves the loop reads the newest copy.
     '1.1-loop/1.1.2-gate.md': 'PASS_IF_NUM_GTE::2::{{ steps["1.1.1"].files["draft"] }}',

@@ -24,5 +24,5 @@ export function gateValue(value, config, expected = false) {
 }
 
 export function getPlan(tree) {
-  return flatten(tree).map(node => ({ type: node.type, id: node.id ?? '', path: node.relative || '.', config: node.type === 'if' || node.type === 'loop' ? node.config : undefined }));
+  return flatten(tree).map(node => ({ type: node.type, id: node.id ?? '', path: node.relative || '.', config: node.type === 'if' || node.type === 'until' ? node.config : undefined }));
 }

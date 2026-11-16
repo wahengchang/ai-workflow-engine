@@ -24,7 +24,7 @@ Usage:
   awe check [dir]                 validate, list the steps, check the executor
 
   dir   a workflow folder (it holds awe.json); default: the current folder, or the nearest parent that does
-  step  1.2, 3.1.2, or 2.1.1@2 (iteration 2 of the LOOP around 2.1.1)
+  step  1.2, 3.1.2, or 2.1.1@2 (iteration 2 of the UNTIL group around 2.1.1)
 
 Build a workflow one step at a time:
   awe run 1.1        run step 1.1
@@ -177,7 +177,7 @@ async function prepare(cwd, dir) {
       sources.set(node.file, text);
     }
     if (node.type === 'if') validateTemplate(node.config.test, `${node.relative}/FLOW.json (test)`);
-    if (node.type === 'loop') validateTemplate(node.config.until, `${node.relative}/FLOW.json (until)`);
+    if (node.type === 'until') validateTemplate(node.config.test, `${node.relative}/FLOW.json (test)`);
   }
   const outputs = await validateReferences(entry, tree, sources);
   const promptNodes = flatten(tree).filter(node => node.type === 'prompt');
@@ -191,7 +191,8 @@ async function prepare(cwd, dir) {
   const idleFormatter = entry.settings.formatter && !jsonSteps.length
     ? ['awe.json has "formatter", but no step declares "json", so it is never used.']
     : [];
-  const warnings = [...entry.settings.warnings, ...unused, ...idleFormatter, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
+  const legacy = (tree.legacyLoops ?? []).map(file => `${file} uses the old \"type\": \"loop\" with \"until\". It still runs, but write \"type\": \"until\" and name the checked value \"test\" instead (the same word an IF uses).`);
+  const warnings = [...entry.settings.warnings, ...legacy, ...unused, ...idleFormatter, ...(tree.ignoredEntries ?? []).map(file => `${file} is ignored: only the awe.json at the workflow root is used (its "common" text, inputs and executors). Move what you need into the root awe.json or into that folder's step prompts. (Running awe from inside ${path.dirname(file)} would treat that folder as a separate workflow.)`)];
   return { entry, tree, promptIds, sources, outputs, warnings, commonUsers, jsonSteps };
 }
 
@@ -287,7 +288,7 @@ async function runCommand({ dir, step, flags }, cwd, options) {
     const rendered = await dryRun(entry, tree, { input: flags.input, step: target?.step, sources, outputs });
     if (flags.json) return { output: JSON.stringify(withWarnings({ dry: true, steps: rendered }, warnings), null, 2), code: 0, warnings };
     const body = rendered.map(item => `──── ${item.id}  ${item.source} ────\n${item.prompt.trimEnd()}`).join('\n\n');
-    const note = `DRY RUN — ${rendered.length} prompt${rendered.length === 1 ? '' : 's'} rendered; nothing was executed, no AI calls, no cache written.\nReferences to earlier steps appear as [output of 1.1]. Every IF branch is shown; a LOOP body once.`;
+    const note = `DRY RUN — ${rendered.length} prompt${rendered.length === 1 ? '' : 's'} rendered; nothing was executed, no AI calls, no cache written.\nReferences to earlier steps appear as [output of 1.1]. Every IF branch is shown; an UNTIL body once.`;
     return { output: `${note}\n\n${body}\n\n${note.split('\n')[0]}`, code: 0, warnings };
   }
 

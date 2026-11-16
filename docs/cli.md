@@ -11,7 +11,7 @@ awe check [dir]                 validate, list the steps, check the executor
 
 `dir` is a workflow folder. Leave it out and awe uses the current folder, or the nearest parent that contains
 `awe.json`, so every command also works from a sub-folder. `step` is a step address: `1.2`, `3.1.2`, or `2.1.1@2`
-(see [LOOPs](#loops-and-parallel-groups)). A word that looks like `1.2` is always a step, never a folder; write `./1.2`
+(see [UNTIL groups](#until-and-parallel-groups)). A word that looks like `1.2` is always a step, never a folder; write `./1.2`
 for a folder with that name.
 
 ## Build a workflow one step at a time
@@ -68,7 +68,7 @@ A prompt is a Markdown file with variables; awe fills them in and saves the resu
 pass as an argument (over 64 KB; 16 KB on Windows) `{prompt}` automatically becomes one line, `Read and follow the
 instructions in the file: <path>`, so there is no need to write a wrapper script.
 
-The command also receives three environment variables: `AWE_STEP` (`1.2`), `AWE_ADDRESS` (`2.1.1@2` inside a loop) and
+The command also receives three environment variables: `AWE_STEP` (`1.2`), `AWE_ADDRESS` (`2.1.1@2` inside an until group) and
 `AWE_RUN_ID`, so a wrapper script can tell which step it is serving. The prompt itself carries no step header.
 
 Common commands:
@@ -140,7 +140,7 @@ A stored result is reused only if all of this still holds:
 
 - the step's fingerprint is unchanged: its prompt file, the common text, inputs (`awe.json` plus `--var`), its command line
   (every argument: another `--model` is another result; timeouts are ignored), declared output files, its JSON declaration, its position
-  in the workflow (including the IF branch and LOOP iteration), and **the exact results it could see from earlier steps**;
+  in the workflow (including the IF branch and UNTIL iteration), and **the exact results it could see from earlier steps**;
 - the stored output and every saved output file still exist and match the recorded size and SHA-256.
 
 ```mermaid
@@ -177,13 +177,14 @@ with `--no-cache`, needs no reason.
 If a rerun fails, awe does not quietly fall back to the older success: later steps cannot be reused until that step
 succeeds again. Old attempts stay on disk (`awe show`).
 
-### Loops and parallel groups
+### UNTIL and parallel groups
 
 - **sequence**: prerequisites run in order; a rerun invalidates all later steps.
 - **IF**: the gate is evaluated from the (reused or fresh) results each time. If it flips, the new branch runs. Naming a
   step in the branch the gate did not select fails with `TARGET_UNREACHABLE`; nothing is executed.
-- **LOOP**: every iteration is its own occurrence. `awe run 2.1.1@2` is step 2.1.1 in iteration 2 of its loop; with nested
-  loops list the iteration of each loop, outer to inner: `1.1.2.1@2.1`. Without `@`, awe uses the only occurrence it has
+- **UNTIL**: repeats its steps until a check passes (`"type": "until"`, `test`, `equals`, `maxIterations`; at most that many
+  rounds, then `UNTIL_EXHAUSTED`). Every iteration is its own occurrence. `awe run 2.1.1@2` is step 2.1.1 in iteration 2 of its
+  group; with nested groups list the iteration of each, outer to inner: `1.1.2.1@2.1`. Without `@`, awe uses the only occurrence it has
   seen, or asks you to choose and lists them. Rerunning iteration *k* keeps the iterations before *k*; later ones are stale.
 - **PARALLEL**: branches share one upstream snapshot and publish together at the join. Naming a step inside a branch runs
   only that branch's prerequisites. If a branch fails, the siblings that succeeded are kept.
@@ -201,7 +202,7 @@ awe show 1.2 --prompt     the rendered prompt that was sent
 awe show 1.2 --err        the last lines the command wrote to stderr
 awe show 1.1 --raw         only the step's own text; nothing else, so it can be piped
 awe show 1.1 --formatted   only the JSON made from it (a step that declares "json"); nothing else
-awe show 2.1.1@2          one LOOP iteration (same address form as `awe run`)
+awe show 2.1.1@2          one UNTIL iteration (same address form as `awe run`)
 awe show --run <id>       a specific run (default: the latest)
 awe show ... --json       the stored state
 ```
@@ -209,13 +210,13 @@ awe show ... --json       the stored state
 ## `awe check`
 
 Validates the common text, every prompt and flow file (template syntax, references to steps that are not guaranteed to
-exist, IF/LOOP settings, output declarations), prints the plan, and looks each configured executable up on PATH. A
+exist, IF/UNTIL settings, output declarations), prints the plan, and looks each configured executable up on PATH. A
 workflow with a problem fails with exit `2`. A missing executor is reported (`NOT READY`, and `"ready": false` with `--json`) but does not fail the check, so a CI machine without an AI CLI can still validate workflows.
 
 ## `awe run --dry`
 
 Renders every prompt without calling anything. References to earlier results show as `[output of 1.1]` and
-`[file report of 1.1]`; every IF branch is shown, and a LOOP body once. Nothing is written: no run, no cache. A dry run
+`[file report of 1.1]`; every IF branch is shown, and an UNTIL body once. Nothing is written: no run, no cache. A dry run
 checks wiring and wording; it says nothing about what a model will answer.
 
 ## Common text (`"common"` in `awe.json`)
@@ -277,7 +278,7 @@ With `--json`, such warnings are also in the output as `"warnings"`.
 ## Order, and what a step receives
 
 Steps run in numeric order, not file-name order: `1.1`, `1.2`, then everything in `stage-2/` (`2.1`, `2.2`), then `10.1` after
-`9.1`. A plain folder is a sequence; `FLOW.json` turns it into `parallel`, `if` or `loop`. A folder needs a numeric
+`9.1`. A plain folder is a sequence; `FLOW.json` turns it into `parallel`, `if` or `until`. A folder needs a numeric
 prefix (`2.1-review/`) or a `stage-N` name (`stage-2/`): a folder just called `2/` that holds prompts is rejected, with
 the name to use instead.
 
@@ -300,7 +301,7 @@ flowchart LR
 ## Workflow files
 
 Unchanged: numbered `N.N-name.md` prompts, `FLOW.json` for `parallel` / `if` /
-`loop` groups, and `{{ input.x }}` / `{{ steps["1.1"].output }}` / `{{ steps["1.1"].artifact }}` /
+`until` groups, and `{{ input.x }}` / `{{ steps["1.1"].output }}` / `{{ steps["1.1"].artifact }}` /
 `{{ steps["1.1"].files["name"] }}` references. See the [README](../README.md).
 
 A folder inside the workflow is part of it only if it is a numbered or `stage-N` folder, or holds a `FLOW.json` or a numbered
@@ -327,7 +328,7 @@ Declare outputs per step in `awe.json`:
 }
 ```
 
-and reference the saved copy by name from later steps (and from IF/LOOP expressions):
+and reference the saved copy by name from later steps (and from IF/UNTIL expressions):
 
 ```md
 Review the PDF at {{ steps["1.1"].files["report"] }}
@@ -648,7 +649,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 - The lock uses process IDs, so it protects one machine only.
 - Mid-step output is not resumable: an interrupted step runs again from its start.
 - Nothing prunes `.awe/runs` or `.awe/cache`, and every run that executes steps writes new artifacts, prompts and saved files (a whole run ignores the cache by default, so it rewrites the same artifacts under a new run id). Delete `.awe/` to reclaim space; the next run starts a fresh cache. Cached results point into the run folders that produced them, so deleting only some old runs is safe but makes the steps that lived there run again.
-- A step inside a `loop` cannot see which iteration it is in: there is no `{{ loop.iteration }}`. `@n` addresses an iteration from the outside (`awe run 2.1.1@2`), but a prompt that should behave differently in round 2 has to read the previous step's output. A template variable for it is a possible follow-up, not part of v0.2.
+- A step inside an `until` group cannot see which iteration it is in: there is no `{{ loop.iteration }}`, and no for-each over a JSON array yet (it would be a separate feature). `@n` addresses an iteration from the outside (`awe run 2.1.1@2`), but a prompt that should behave differently in round 2 has to read the previous step's output. A template variable for it is a possible follow-up, not part of v0.2.
 - There is no built-in search or token budget. Put one in your prompt ("at most 5 searches") and give slow, tool-using
   steps a longer `timeout`.
 
@@ -662,7 +663,7 @@ the per-workspace salt). Set `"storePrompts": false` in `awe.json` to keep promp
 | `WORKFLOW_NOT_FOUND` | not inside a workflow; use `awe init <dir>`, `cd` into one, or pass the folder |
 | `STEP_NOT_FOUND` | no such step, or the address names a group (lists the valid steps) |
 | `ITERATION_REQUIRED` / `ITERATION_INVALID` | `step@n` is ambiguous, malformed or out of range |
-| `TARGET_UNREACHABLE` | the gate or loop never reaches that step; it was not executed |
+| `TARGET_UNREACHABLE` | the gate or until group never reaches that step; it was not executed |
 | `UNKNOWN_EFFECT` / `RETRY_UNKNOWN` | see [recovery](#interruptions-crashes-and-unknown-outcomes) |
 | `CACHE_BUSY` | another `awe run` is using this workflow's cache |
 | `EXECUTOR_TIMEOUT`, `EXECUTOR_FAILED`, `EXECUTOR_ERROR` | the command timed out, exited non-zero, or could not start |

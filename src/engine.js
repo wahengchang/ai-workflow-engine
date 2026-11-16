@@ -16,14 +16,15 @@ import { openSession, workspaceSalt } from './cache.js';
 const FINGERPRINT_VERSION = 5;
 
 // ── Addresses ───────────────────────────────────────────────────────────────
-// A step ID names the prompt; an *occurrence* names which pass through enclosing LOOPs
+// A step ID names the prompt; an *occurrence* names which pass through enclosing UNTIL groups
 // it belongs to; an *attempt* is one execution of an occurrence. Cache slots are per
 // occurrence ("1.2" or "1.2@stage-2/2.1-loop=3"); attempts only ever accumulate.
 export const loopKey = loops => loops.map(loop => `${loop.rel}=${loop.iter}`).join(',');
 export const addressOf = (stepId, loops) => (loops.length ? `${stepId}@${loopKey(loops)}` : stepId);
 
-// What people type and read: "2.1.1" or "2.1.1@2.1" (iteration of each enclosing LOOP, outer to inner).
-// The internal cache key keeps the loop paths, so it stays stable if loops are renamed in docs.
+// What people type and read: "2.1.1" or "2.1.1@2.1" (iteration of each enclosing UNTIL group, outer to inner).
+// The internal cache key keeps the "loop" wording (loop:<path>#<n>) on purpose: renaming it would make every
+// cached result look stale. People never see it.
 // The formatter of a step that declares "json" is its own cached unit, addressed like the step plus this suffix.
 // People never type it: `awe run 1.1` runs both, and --retry 1.1 covers both.
 export const FORMAT_SUFFIX = '~json';
@@ -51,20 +52,20 @@ function knownOccurrences(session, stepId) {
 function resolveLoops(target, session) {
   const { stepId, loopNodes, iterations } = target;
   if (!loopNodes.length) {
-    assertAwe(iterations === undefined, 'ITERATION_INVALID', `Step ${stepId} is not inside a LOOP, so "@" does not apply. Run: awe run ${stepId}`);
+    assertAwe(iterations === undefined, 'ITERATION_INVALID', `Step ${stepId} is not inside an UNTIL group, so "@" does not apply. Run: awe run ${stepId}`);
     return [];
   }
   const format = `${stepId}@${loopNodes.map(loop => `<1-${loop.config.maxIterations}>`).join('.')}`;
   if (iterations) {
-    assertAwe(iterations.length === loopNodes.length, 'ITERATION_INVALID', `Step ${stepId} is inside ${loopNodes.length} LOOP${loopNodes.length > 1 ? 's (outer to inner)' : ''}. Write it as ${format}`);
+    assertAwe(iterations.length === loopNodes.length, 'ITERATION_INVALID', `Step ${stepId} is inside ${loopNodes.length} UNTIL group${loopNodes.length > 1 ? 's (outer to inner)' : ''}. Write it as ${format}`);
     return loopNodes.map((loop, index) => {
-      assertAwe(iterations[index] >= 1 && iterations[index] <= loop.config.maxIterations, 'ITERATION_INVALID', `Iteration ${iterations[index]} is outside 1-${loop.config.maxIterations} for loop ${loop.relative}. Write it as ${format}`);
+      assertAwe(iterations[index] >= 1 && iterations[index] <= loop.config.maxIterations, 'ITERATION_INVALID', `Iteration ${iterations[index]} is outside 1-${loop.config.maxIterations} for the until group ${loop.relative}. Write it as ${format}`);
       return { rel: loop.relative, iter: iterations[index] };
     });
   }
   const known = knownOccurrences(session, stepId);
   if (known.length > 1) {
-    throw new AweError('ITERATION_REQUIRED', `Step ${stepId} runs inside a LOOP and has several occurrences. Say which: ${format}\nKnown occurrences: ${known.map(displayAddress).sort().join(', ')}`);
+    throw new AweError('ITERATION_REQUIRED', `Step ${stepId} runs inside an UNTIL group and has several occurrences. Say which: ${format}\nKnown occurrences: ${known.map(displayAddress).sort().join(', ')}`);
   }
   // First time (or a single known occurrence): there is nothing to disambiguate.
   if (known.length === 1) {
@@ -77,7 +78,7 @@ function resolveLoops(target, session) {
 // ── Context ─────────────────────────────────────────────────────────────────
 // What a step may legitimately depend on: results of steps that come earlier in
 // workflow order. Never the step's own earlier occurrences or later steps, which a
-// LOOP can leave in the shared context from a previous pass.
+// UNTIL group can leave in the shared context from a previous pass.
 export function precontext(context, ord) {
   return Object.entries(context.steps).filter(([, result]) => result.ord < ord).sort(([a], [b]) => a.localeCompare(b));
 }
@@ -87,7 +88,7 @@ function indexTree(tree) {
   let ord = 0;
   (function visit(node, loops) {
     info.set(node, { ord: ord++, loops });
-    const inner = node.type === 'loop' ? [...loops, node] : loops;
+    const inner = node.type === 'until' ? [...loops, node] : loops;
     for (const child of node.children ?? []) visit(child, inner);
   })(tree, []);
   return info;
@@ -200,7 +201,7 @@ async function runInSession(entry, tree, { options, outputs, info, targetNode, i
     commonDigest: sha256(entry.common ?? ''),
     inputDigest: session.data.compat.input,
     subtrees: new Map(),
-    // Per-run attempt numbers for formatters, so their artifacts never collide across LOOP iterations.
+    // Per-run attempt numbers for formatters, so their artifacts never collide across UNTIL iterations.
     formatAttempts: new Map(),
   };
   await store.initialize(state);
@@ -229,7 +230,7 @@ function containsTarget(sh, node) {
   return sh.subtrees.get(node).has(sh.target.stepId);
 }
 
-// The target is "active" for a group when the group contains it AND every LOOP entered so
+// The target is "active" for a group when the group contains it AND every UNTIL group entered so
 // far is on the target's own path (same loop, same iteration).
 function active(sh, node, scope) {
   return containsTarget(sh, node) && scope.loops.length <= sh.target.loops.length
@@ -288,10 +289,10 @@ async function walk(node, context, sh, scope) {
     }
     return walk(chosen, context, sh, extend(scope, `if:${node.relative}=${branch}`));
   }
-  if (node.type === 'loop') {
+  if (node.type === 'until') {
     let previous = null;
     for (let i = 1; i <= node.config.maxIterations; i++) {
-      event(sh, 'LOOP_ITERATION', node, { iteration: i });
+      event(sh, 'UNTIL_ITERATION', node, { iteration: i });
       const frame = new Map();
       // Iteration i is only reached because iteration i-1 did not satisfy the gate, so it
       // depends on everything iteration i-1 produced (even when the values look the same).
@@ -301,17 +302,17 @@ async function walk(node, context, sh, scope) {
         frames: [...scope.frames, frame],
       };
       for (const child of node.children) if (await walk(child, context, sh, inner)) return true;
-      const actual = gateValue(renderTemplate(node.config.until, context, `${node.relative}/FLOW.json (until)`), node.config);
+      const actual = gateValue(renderTemplate(node.config.test, context, `${node.relative}/FLOW.json (test)`), node.config);
       if (actual === gateValue(node.config.equals, node.config, true)) {
-        event(sh, 'LOOP_COMPLETED', node, { iteration: i });
+        event(sh, 'UNTIL_COMPLETED', node, { iteration: i });
         if (active(sh, node, scope)) {
-          throw new AweError('TARGET_UNREACHABLE', `Step ${sh.target.display} is not reached: loop ${node.relative} finished after iteration ${i}. It was not executed.`);
+          throw new AweError('TARGET_UNREACHABLE', `Step ${sh.target.display} is not reached: until group ${node.relative} finished after iteration ${i}. It was not executed.`);
         }
         return false;
       }
       previous = frameDigest(frame);
     }
-    throw new AweError('LOOP_EXHAUSTED', `Loop ${node.relative} did not match exit condition after ${node.config.maxIterations} iterations`);
+    throw new AweError('UNTIL_EXHAUSTED', `Until group ${node.relative} did not match its exit condition after ${node.config.maxIterations} iterations`);
   }
   throw new AweError('INVALID_FLOW', `Unsupported flow type ${node.type}`);
 }
@@ -324,7 +325,7 @@ const REASONS = [
   ['source', 'its prompt file changed'],
   ['executor', 'its command changed'],
   ['outputs', 'its output declarations changed'],
-  ['control', 'its place in the workflow changed (IF branch or LOOP pass)'],
+  ['control', 'its place in the workflow changed (IF branch or UNTIL pass)'],
   ['upstream', 'an earlier step ran again'],
   ['plan', 'the workflow layout changed'],
   ['address', 'the workflow layout changed'],
@@ -623,7 +624,7 @@ async function convertStep(node, context, sh, scope, main) {
     throw Object.assign(new AweError('UNKNOWN_EFFECT', `The formatter of step ${displayAddress(address)} has an unknown outcome: its previous attempt (run ${record.unknown.runId}, attempt ${record.unknown.attempt}) ended with ${record.unknown.reason} after the command may have started, and its external effects cannot be known. AWE will not resend it on its own. Check what it may have changed, then run the same command again with --retry ${displayAddress(address)}`), { step: `${displayAddress(address)} json` });
   }
 
-  // Attempts count across the run (a LOOP runs the formatter once per iteration), so file names never collide.
+  // Attempts count across the run (an UNTIL group runs the formatter once per iteration), so file names never collide.
   // The counter lives on the run, not on state.steps[id], which a cache hit replaces.
   const attempt = (sh.formatAttempts.get(id) ?? 0) + 1;
   sh.formatAttempts.set(id, attempt);
